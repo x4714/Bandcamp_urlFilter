@@ -1,0 +1,4 @@
+https://example.bandcamp.com/album/xyz | mygenre|12|1h15m|2026-05-01|free
+https://notbandcamp.com/album/abc | rock|10|45m|2026-01-01|free
+https://good.bandcamp.com/album/ok | jazz|8|40m|2026-10-10|free
+https://another.bandcamp.com/album/dup | metal|5|30m|2026-02-02|free

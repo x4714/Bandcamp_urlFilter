@@ -1,0 +1,6 @@
+[10:20:30] <MyUser> <https://example.bandcamp.com/album/xyz> My Artist - My Title [mygenre|12|1h15m|2026-05-01|free]
+[10:21:00] <Other> <https://notbandcamp.com/album/abc> Artist2 - Title2 [rock|10|45m|2026-01-01|free]
+[10:22:00] <User3> <https://test.bandcamp.com/track/123> Artist3 - Title3 [pop|1|5m|2025-01-01|paid]
+[10:23:00] <User4> <https://good.bandcamp.com/album/ok> Artist4 - Title4 [jazz|8|40m|2026-10-10|free]
+*** System message should be ignored
+[10:24:00] <User5> <https://another.bandcamp.com/album/dup> Artist5 - Title5 [metal|5|30m|2026-02-02|free]
