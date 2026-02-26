@@ -24,12 +24,12 @@ class BaseService:
                         existing.add(url)
         return existing
 
-    def process_and_write_line(self, line: str, out_file: TextIO, seen_urls: Set[str]) -> bool:
-        """Parses, filters and writes line to file if matched. Returns True if written."""
+    def process_and_write_line(self, line: str, out_file: TextIO, seen_urls: Set[str]) -> Optional[str]:
+        """Parses, filters and writes line to file if matched. Returns timestamp if written."""
         entry = parse_line(line)
         if entry and self.log_filter.is_valid(entry):
             if self.settings.avoid_duplicates and entry.url in seen_urls:
-                return False
+                return None
 
             output_line = entry.url
             if self.settings.append_description and entry.meta_raw:
@@ -38,8 +38,8 @@ class BaseService:
             out_file.write(output_line + '\n')
             out_file.flush()
             seen_urls.add(entry.url)
-            return True
-        return False
+            return entry.timestamp
+        return None
 
 class ImportService(BaseService):
     def run(self, input_path: str, output_path: str):
@@ -53,6 +53,7 @@ class ImportService(BaseService):
 
         seen_urls = self.get_existing_urls(output_path)
         added_count = 0
+        max_timestamp = ""
 
         try:
             with open(input_path, 'r', encoding='utf-8', errors='ignore') as infile, \
@@ -63,13 +64,51 @@ class ImportService(BaseService):
                         self.update_callback("Import stopped by user.")
                         break
                         
-                    if self.process_and_write_line(line, outfile, seen_urls):
+                    written_ts = self.process_and_write_line(line, outfile, seen_urls)
+                    if written_ts is not None:
                         added_count += 1
+                        if written_ts > max_timestamp:
+                            max_timestamp = written_ts
 
             if self.is_running:
-                self.update_callback(f"Import complete. Added {added_count} new entries.")
+                self.update_callback(f"Import complete. Added {added_count} new entries.|{max_timestamp}")
         except Exception as e:
             self.update_callback(f"Import error: {e}")
+        finally:
+            self.is_running = False
+
+    def dry_run(self, input_path: str, output_path: str):
+        self.is_running = True
+        self.update_callback("Starting Dry Run...")
+        
+        if not os.path.exists(input_path):
+            self.update_callback(f"Error: Log file not found at {input_path}")
+            self.is_running = False
+            return
+
+        seen_urls = self.get_existing_urls(output_path)
+        total_imported = 0
+        ready_for_export = 0
+
+        try:
+            with open(input_path, 'r', encoding='utf-8', errors='ignore') as infile:
+                for line in infile:
+                    if not self.is_running:
+                        self.update_callback("Dry Run stopped by user.")
+                        break
+                        
+                    entry = parse_line(line)
+                    if entry:
+                        total_imported += 1
+                        if self.log_filter.is_valid(entry):
+                            if not (self.settings.avoid_duplicates and entry.url in seen_urls):
+                                ready_for_export += 1
+                                seen_urls.add(entry.url)
+
+            if self.is_running:
+                self.update_callback(f"Dry Run Complete|{total_imported}|{ready_for_export}")
+        except Exception as e:
+            self.update_callback(f"Dry Run error: {e}")
         finally:
             self.is_running = False
 
@@ -88,6 +127,7 @@ class MonitorService(BaseService):
 
         seen_urls = self.get_existing_urls(output_path)
         added_count = 0
+        max_timestamp = ""
 
         try:
             with open(input_path, 'r', encoding='utf-8', errors='ignore') as infile, \
@@ -103,9 +143,12 @@ class MonitorService(BaseService):
                         time.sleep(0.5)
                         continue
                     
-                    if self.process_and_write_line(line, outfile, seen_urls):
+                    written_ts = self.process_and_write_line(line, outfile, seen_urls)
+                    if written_ts is not None:
                         added_count += 1
-                        self.update_callback(f"Monitor active. Added {added_count} new entries so far.")
+                        if written_ts > max_timestamp:
+                            max_timestamp = written_ts
+                        self.update_callback(f"Monitor active. Added {added_count} new entries so far.|{max_timestamp}")
 
         except Exception as e:
             self.update_callback(f"Monitor error: {e}")

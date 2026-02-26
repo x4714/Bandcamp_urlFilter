@@ -42,4 +42,9 @@ class LogFilter:
             if entry.duration_min is None or entry.duration_min < self.settings.min_duration:
                 return False
 
+        # 6. Timestamp Filtering
+        if self.settings.filter_by_timestamp and self.settings.last_export_timestamp:
+            if not entry.timestamp or entry.timestamp <= self.settings.last_export_timestamp:
+                return False
+
         return True

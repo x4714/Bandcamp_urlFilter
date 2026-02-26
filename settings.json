@@ -5,5 +5,9 @@
     "append_description": true,
     "avoid_duplicates": true,
     "min_tracks": 10,
-    "min_duration": 55
+    "min_duration": 55,
+    "custom_filename": "",
+    "add_filter_info": true,
+    "last_export_timestamp": "2026-02-20T07:02:44.254Z",
+    "filter_by_timestamp": false
 }
