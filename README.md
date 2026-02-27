@@ -52,4 +52,12 @@ Diese Liste kann im Anschluss z.B. mit bcdl heruntergeladen werden.
 2. **Log-Datei auswählen**: Wählen Sie die IRC-Logdatei aus, die gescannt werden soll.
 3. **Ausgabeordner wählen**: Legen Sie fest, wo die gefilterten Links gespeichert werden sollen.
 4. **Filter einstellen**: Geben Sie bei Bedarf Min/Max Tracks oder Dauer ein.
-5. **Starten**: Klicken Sie auf "Start", um den Prozess zu beginnen.
+## 📂 Projektstruktur
+
+- `core/`: Business-Logik (Filter, Parser, Services, Einstellungen).
+- `gui/`: Benutzeroberfläche (`main_window.py`).
+- `tests/`: Automatisierte Tests für Parser und Services.
+- `scripts/`: Hilfsskripte für die Entwicklung.
+- `main.py`: Haupteinstiegspunkt der Anwendung.
+- `run.bat`: Windows-Batchdatei zum einfachen Starten.
+- `requirements.txt`: Übersicht der Abhängigkeiten (aktuell nur Standardbibliothek).
