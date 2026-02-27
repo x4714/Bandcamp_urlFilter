@@ -13,7 +13,9 @@ class AppSettings:
     append_description: bool = False
     avoid_duplicates: bool = True
     min_tracks: Optional[int] = None
+    max_tracks: Optional[int] = None
     min_duration: Optional[int] = None
+    max_duration: Optional[int] = None
     custom_filename: str = ""
     add_filter_info: bool = False
     last_export_timestamp: str = ""

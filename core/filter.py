@@ -37,9 +37,19 @@ class LogFilter:
             if entry.track_count is None or entry.track_count < self.settings.min_tracks:
                 return False
 
+        # 4.5 Max Tracks
+        if self.settings.max_tracks is not None:
+            if entry.track_count is None or entry.track_count > self.settings.max_tracks:
+                return False
+
         # 5. Min Duration
         if self.settings.min_duration is not None:
             if entry.duration_min is None or entry.duration_min < self.settings.min_duration:
+                return False
+
+        # 5.5 Max Duration
+        if self.settings.max_duration is not None:
+            if entry.duration_min is None or entry.duration_min > self.settings.max_duration:
                 return False
 
         # 6. Timestamp Filtering

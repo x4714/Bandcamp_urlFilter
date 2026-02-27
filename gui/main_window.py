@@ -67,10 +67,18 @@ class MainWindow(tk.Tk):
         ttk.Label(options_frame, text="Min tracks:").grid(row=1, column=1, sticky="e", padx=5, pady=2)
         self.entry_min_tracks = ttk.Entry(options_frame, width=10)
         self.entry_min_tracks.grid(row=1, column=2, sticky="w", pady=2)
+
+        ttk.Label(options_frame, text="Max tracks:").grid(row=1, column=3, sticky="e", padx=5, pady=2)
+        self.entry_max_tracks = ttk.Entry(options_frame, width=10)
+        self.entry_max_tracks.grid(row=1, column=4, sticky="w", pady=2)
         
         ttk.Label(options_frame, text="Min duration (min):").grid(row=2, column=1, sticky="e", padx=5, pady=2)
         self.entry_min_duration = ttk.Entry(options_frame, width=10)
         self.entry_min_duration.grid(row=2, column=2, sticky="w", pady=2)
+
+        ttk.Label(options_frame, text="Max duration (min):").grid(row=2, column=3, sticky="e", padx=5, pady=2)
+        self.entry_max_duration = ttk.Entry(options_frame, width=10)
+        self.entry_max_duration.grid(row=2, column=4, sticky="w", pady=2)
 
         # Export Naming & Timestamp Logic
         ttk.Label(options_frame, text="Filename:").grid(row=3, column=0, sticky="w", pady=2)
@@ -161,8 +169,12 @@ class MainWindow(tk.Tk):
         
         if self.settings.min_tracks is not None:
             self.entry_min_tracks.insert(0, str(self.settings.min_tracks))
+        if self.settings.max_tracks is not None:
+            self.entry_max_tracks.insert(0, str(self.settings.max_tracks))
         if self.settings.min_duration is not None:
             self.entry_min_duration.insert(0, str(self.settings.min_duration))
+        if self.settings.max_duration is not None:
+            self.entry_max_duration.insert(0, str(self.settings.max_duration))
 
         self.entry_custom_filename.insert(0, self.settings.custom_filename)
         self.var_add_filter_info.set(self.settings.add_filter_info)
@@ -186,12 +198,24 @@ class MainWindow(tk.Tk):
             self.settings.min_tracks = int(val) if val else None
         except ValueError:
             self.settings.min_tracks = None
+
+        try:
+            val = self.entry_max_tracks.get().strip()
+            self.settings.max_tracks = int(val) if val else None
+        except ValueError:
+            self.settings.max_tracks = None
             
         try:
             val = self.entry_min_duration.get().strip()
             self.settings.min_duration = int(val) if val else None
         except ValueError:
             self.settings.min_duration = None
+
+        try:
+            val = self.entry_max_duration.get().strip()
+            self.settings.max_duration = int(val) if val else None
+        except ValueError:
+            self.settings.max_duration = None
 
         SettingsManager.save(self.settings)
 
@@ -213,10 +237,14 @@ class MainWindow(tk.Tk):
         base_name = self.settings.custom_filename if self.settings.custom_filename else f"export_{ts}"
         if self.settings.add_filter_info:
             suffix = ""
-            if self.settings.min_tracks is not None:
-                suffix += f"_T{self.settings.min_tracks}"
-            if self.settings.min_duration is not None:
-                suffix += f"_M{self.settings.min_duration}"
+            if self.settings.min_tracks is not None or self.settings.max_tracks is not None:
+                min_t = self.settings.min_tracks if self.settings.min_tracks is not None else ""
+                max_t = self.settings.max_tracks if self.settings.max_tracks is not None else ""
+                suffix += f"_T{min_t}-{max_t}"
+            if self.settings.min_duration is not None or self.settings.max_duration is not None:
+                min_d = self.settings.min_duration if self.settings.min_duration is not None else ""
+                max_d = self.settings.max_duration if self.settings.max_duration is not None else ""
+                suffix += f"_M{min_d}-{max_d}"
             base_name += suffix
         
         if not base_name.endswith(".txt"):
