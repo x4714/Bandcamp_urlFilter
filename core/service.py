@@ -18,10 +18,16 @@ class BaseService:
         if os.path.exists(filepath):
             with open(filepath, 'r', encoding='utf-8') as f:
                 for line in f:
-                    # Line format could be just URL or URL | Meta
-                    url = line.split('|')[0].strip()
-                    if url:
-                        existing.add(url)
+                    content = line.strip()
+                    if not content:
+                        continue
+                    # Only take the first part if it's a URL (contains bandcamp)
+                    # This handles both:
+                    # 1. Old format: URL | Meta
+                    # 2. New format: URL \n Meta
+                    url_candidate = content.split('|')[0].strip()
+                    if 'bandcamp.' in url_candidate.lower():
+                        existing.add(url_candidate)
         return existing
 
     def process_and_write_line(self, line: str, out_file: TextIO, seen_urls: Set[str]) -> Optional[str]:
@@ -31,11 +37,13 @@ class BaseService:
             if self.settings.avoid_duplicates and entry.url in seen_urls:
                 return None
 
-            output_line = entry.url
-            if self.settings.append_description and entry.meta_raw:
-                output_line += f" | {entry.meta_raw}"
+            # Write URL
+            out_file.write(entry.url + '\n')
             
-            out_file.write(output_line + '\n')
+            # Write Description in next line if enabled
+            if self.settings.append_description and entry.meta_raw:
+                out_file.write(entry.meta_raw + '\n')
+            
             out_file.flush()
             seen_urls.add(entry.url)
             return entry.timestamp
