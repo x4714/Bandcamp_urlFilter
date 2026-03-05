@@ -42,17 +42,13 @@ def parse_timestamp_from_ui(ts: str) -> str:
 from core.settings import AppSettings, SettingsManager
 from core.service import ImportService, MonitorService
 
-class MainWindow(tk.Tk):
+class MainWindow(ctk.CTk):
     def __init__(self, settings: AppSettings):
         super().__init__()
         self.settings = settings
         self.title("Bandcamp LinkFilter")
         self.geometry("650x550")
         self.minsize(600, 500)
-        
-        # Styles
-        style = ttk.Style()
-        style.theme_use('clam')
         
         self.service_thread = None
         self.current_service = None
@@ -62,114 +58,114 @@ class MainWindow(tk.Tk):
 
     def _build_ui(self):
         # --- File Selection Frame ---
-        file_frame = ttk.LabelFrame(self, text="File Paths", padding=10)
+        file_frame = ctk.CTkFrame(self)
         file_frame.pack(fill="x", padx=10, pady=5)
         
         # Log File
-        ttk.Label(file_frame, text="Log File:").grid(row=0, column=0, sticky="e", pady=2)
-        self.entry_log_file = ttk.Entry(file_frame, width=50)
-        self.entry_log_file.grid(row=0, column=1, padx=5, pady=2, sticky="ew")
-        ttk.Button(file_frame, text="Browse...", command=self._browse_log_file).grid(row=0, column=2, pady=2)
+        ctk.CTkLabel(file_frame, text="Log File:").grid(row=0, column=0, sticky="e", pady=5, padx=5)
+        self.entry_log_file = ctk.CTkEntry(file_frame, width=300)
+        self.entry_log_file.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        ctk.CTkButton(file_frame, text="Browse...", command=self._browse_log_file).grid(row=0, column=2, pady=5, padx=5)
         
         # Output Folder
-        ttk.Label(file_frame, text="Output Folder:").grid(row=1, column=0, sticky="e", pady=2)
-        self.entry_out_folder = ttk.Entry(file_frame, width=50)
-        self.entry_out_folder.grid(row=1, column=1, padx=5, pady=2, sticky="ew")
-        ttk.Button(file_frame, text="Browse...", command=self._browse_out_folder).grid(row=1, column=2, pady=2)
+        ctk.CTkLabel(file_frame, text="Output Folder:").grid(row=1, column=0, sticky="e", pady=5, padx=5)
+        self.entry_out_folder = ctk.CTkEntry(file_frame, width=300)
+        self.entry_out_folder.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
+        ctk.CTkButton(file_frame, text="Browse...", command=self._browse_out_folder).grid(row=1, column=2, pady=5, padx=5)
         
         file_frame.columnconfigure(1, weight=1)
 
         # --- Options Frame ---
-        options_frame = ttk.LabelFrame(self, text="Options & Filters", padding=10)
+        options_frame = ctk.CTkFrame(self)
         options_frame.pack(fill="x", padx=10, pady=5)
         
         # Mode
-        mode_frame = ttk.Frame(options_frame)
-        mode_frame.grid(row=0, column=0, columnspan=4, sticky="w", pady=5)
-        ttk.Label(mode_frame, text="Mode:").pack(side="left")
-        self.var_mode = tk.StringVar(value="import")
-        ttk.Radiobutton(mode_frame, text="Import", variable=self.var_mode, value="import").pack(side="left", padx=5)
-        ttk.Radiobutton(mode_frame, text="Monitor", variable=self.var_mode, value="monitor").pack(side="left", padx=5)
+        mode_frame = ctk.CTkFrame(options_frame, fg_color="transparent")
+        mode_frame.grid(row=0, column=0, columnspan=4, sticky="w", pady=5, padx=5)
+        ctk.CTkLabel(mode_frame, text="Mode:").pack(side="left", padx=(0, 10))
+        self.var_mode = ctk.StringVar(value="import")
+        ctk.CTkRadioButton(mode_frame, text="Import", variable=self.var_mode, value="import").pack(side="left", padx=5)
+        ctk.CTkRadioButton(mode_frame, text="Monitor", variable=self.var_mode, value="monitor").pack(side="left", padx=5)
         
         # Checkboxes & Gen Options
-        self.var_append_desc = tk.BooleanVar()
-        ttk.Checkbutton(options_frame, text="Append description", variable=self.var_append_desc).grid(row=1, column=0, sticky="w", pady=2)
+        self.var_append_desc = ctk.BooleanVar()
+        ctk.CTkCheckBox(options_frame, text="Append description", variable=self.var_append_desc).grid(row=1, column=0, sticky="w", pady=5, padx=5)
         
-        self.var_avoid_dup = tk.BooleanVar()
-        ttk.Checkbutton(options_frame, text="Avoid duplicates", variable=self.var_avoid_dup).grid(row=2, column=0, sticky="w", pady=2)
+        self.var_avoid_dup = ctk.BooleanVar()
+        ctk.CTkCheckBox(options_frame, text="Avoid duplicates", variable=self.var_avoid_dup).grid(row=2, column=0, sticky="w", pady=5, padx=5)
         
         # Numeric Filters
-        ttk.Label(options_frame, text="Min tracks:").grid(row=1, column=1, sticky="e", padx=5, pady=2)
-        self.entry_min_tracks = ttk.Entry(options_frame, width=10)
-        self.entry_min_tracks.grid(row=1, column=2, sticky="w", pady=2)
+        ctk.CTkLabel(options_frame, text="Min tracks:").grid(row=1, column=1, sticky="e", padx=5, pady=5)
+        self.entry_min_tracks = ctk.CTkEntry(options_frame, width=80)
+        self.entry_min_tracks.grid(row=1, column=2, sticky="w", pady=5)
 
-        ttk.Label(options_frame, text="Max tracks:").grid(row=1, column=3, sticky="e", padx=5, pady=2)
-        self.entry_max_tracks = ttk.Entry(options_frame, width=10)
-        self.entry_max_tracks.grid(row=1, column=4, sticky="w", pady=2)
+        ctk.CTkLabel(options_frame, text="Max tracks:").grid(row=1, column=3, sticky="e", padx=5, pady=5)
+        self.entry_max_tracks = ctk.CTkEntry(options_frame, width=80)
+        self.entry_max_tracks.grid(row=1, column=4, sticky="w", pady=5)
         
-        ttk.Label(options_frame, text="Min duration (min):").grid(row=2, column=1, sticky="e", padx=5, pady=2)
-        self.entry_min_duration = ttk.Entry(options_frame, width=10)
-        self.entry_min_duration.grid(row=2, column=2, sticky="w", pady=2)
+        ctk.CTkLabel(options_frame, text="Min duration (min):").grid(row=2, column=1, sticky="e", padx=5, pady=5)
+        self.entry_min_duration = ctk.CTkEntry(options_frame, width=80)
+        self.entry_min_duration.grid(row=2, column=2, sticky="w", pady=5)
 
-        ttk.Label(options_frame, text="Max duration (min):").grid(row=2, column=3, sticky="e", padx=5, pady=2)
-        self.entry_max_duration = ttk.Entry(options_frame, width=10)
-        self.entry_max_duration.grid(row=2, column=4, sticky="w", pady=2)
+        ctk.CTkLabel(options_frame, text="Max duration (min):").grid(row=2, column=3, sticky="e", padx=5, pady=5)
+        self.entry_max_duration = ctk.CTkEntry(options_frame, width=80)
+        self.entry_max_duration.grid(row=2, column=4, sticky="w", pady=5)
 
         # Export Naming & Timestamp Logic
-        ttk.Label(options_frame, text="Filename:").grid(row=3, column=0, sticky="w", pady=2)
-        self.entry_custom_filename = ttk.Entry(options_frame, width=20)
-        self.entry_custom_filename.grid(row=3, column=1, sticky="w", pady=2)
+        ctk.CTkLabel(options_frame, text="Filename:").grid(row=3, column=0, sticky="w", pady=5, padx=5)
+        self.entry_custom_filename = ctk.CTkEntry(options_frame, width=150)
+        self.entry_custom_filename.grid(row=3, column=1, columnspan=2, sticky="w", pady=5)
         
-        self.var_add_filter_info = tk.BooleanVar()
-        ttk.Checkbutton(options_frame, text="Add filter info to filename", variable=self.var_add_filter_info).grid(row=3, column=2, sticky="w", pady=2)
+        self.var_add_filter_info = ctk.BooleanVar()
+        ctk.CTkCheckBox(options_frame, text="Add filter info to filename", variable=self.var_add_filter_info).grid(row=3, column=2, columnspan=2, sticky="w", pady=5, padx=5)
 
-        self.var_filter_timestamp = tk.BooleanVar()
-        ttk.Checkbutton(options_frame, text="Filter by Timestamp", variable=self.var_filter_timestamp).grid(row=4, column=0, sticky="w", pady=2)
+        self.var_filter_timestamp = ctk.BooleanVar()
+        ctk.CTkCheckBox(options_frame, text="Filter by Timestamp", variable=self.var_filter_timestamp).grid(row=4, column=0, sticky="w", pady=5, padx=5)
         
-        ttk.Label(options_frame, text="Last TS (DD.MM.YYYY (HH:MM)):").grid(row=4, column=1, sticky="e", padx=5, pady=2)
-        self.entry_last_timestamp = ttk.Entry(options_frame, width=25)
-        self.entry_last_timestamp.grid(row=4, column=2, sticky="w", pady=2)
+        ctk.CTkLabel(options_frame, text="Last TS (DD.MM.YYYY (HH:MM)):").grid(row=4, column=1, sticky="e", padx=5, pady=5)
+        self.entry_last_timestamp = ctk.CTkEntry(options_frame, width=200)
+        self.entry_last_timestamp.grid(row=4, column=2, columnspan=2, sticky="w", pady=5)
 
         # --- Action Buttons ---
-        btn_frame = ttk.Frame(self, padding=10)
-        btn_frame.pack(fill="x", padx=10)
+        btn_frame = ctk.CTkFrame(self, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=10, pady=10)
         
-        self.btn_start = ttk.Button(btn_frame, text="Start", command=self._start)
+        self.btn_start = ctk.CTkButton(btn_frame, text="Start", command=self._start)
         self.btn_start.pack(side="left", padx=5)
         
-        self.btn_stop = ttk.Button(btn_frame, text="Stop", command=self._stop, state="disabled")
+        self.btn_stop = ctk.CTkButton(btn_frame, text="Stop", command=self._stop, state="disabled")
         self.btn_stop.pack(side="left", padx=5)
 
-        self.btn_dry_run = ttk.Button(btn_frame, text="Search / Dry Run", command=self._dry_run)
+        self.btn_dry_run = ctk.CTkButton(btn_frame, text="Search / Dry Run", command=self._dry_run)
         self.btn_dry_run.pack(side="left", padx=5)
 
         # --- Statistics ---
-        stats_frame = ttk.Frame(self, padding=0)
-        stats_frame.pack(fill="x", padx=15)
+        stats_frame = ctk.CTkFrame(self, fg_color="transparent")
+        stats_frame.pack(fill="x", padx=15, pady=5)
         
-        self.lbl_total_imported = ttk.Label(stats_frame, text="Total Imported: 0")
+        self.lbl_total_imported = ctk.CTkLabel(stats_frame, text="Total Imported: 0")
         self.lbl_total_imported.pack(side="left", padx=5)
         
-        self.lbl_ready_export = ttk.Label(stats_frame, text="Ready for Export: 0")
+        self.lbl_ready_export = ctk.CTkLabel(stats_frame, text="Ready for Export: 0")
         self.lbl_ready_export.pack(side="left", padx=20)
 
         # --- Status ---
-        status_frame = ttk.LabelFrame(self, text="Status", padding=10)
+        status_frame = ctk.CTkFrame(self)
         status_frame.pack(fill="both", expand=True, padx=10, pady=5)
         
-        self.lbl_status = ttk.Label(status_frame, text="Ready.", wraplength=550)
-        self.lbl_status.pack(anchor="nw", fill="both", expand=True)
+        self.lbl_status = ctk.CTkLabel(status_frame, text="Ready.", wraplength=550, anchor="nw", justify="left")
+        self.lbl_status.pack(anchor="nw", fill="both", expand=True, padx=10, pady=10)
 
     def _browse_log_file(self):
         filename = filedialog.askopenfilename(title="Select Log File")
         if filename:
-            self.entry_log_file.delete(0, tk.END)
+            self.entry_log_file.delete(0, 'end')
             self.entry_log_file.insert(0, filename)
 
     def _browse_out_folder(self):
         folder = filedialog.askdirectory(title="Select Output Folder")
         if folder:
-            self.entry_out_folder.delete(0, tk.END)
+            self.entry_out_folder.delete(0, 'end')
             self.entry_out_folder.insert(0, folder)
 
     def _update_status(self, msg: str):
@@ -179,17 +175,17 @@ class MainWindow(tk.Tk):
         def _apply():
             if msg.startswith("Dry Run Complete"):
                 parts = msg.split('|')
-                self.lbl_status.config(text=parts[0])
+                self.lbl_status.configure(text=parts[0])
                 if len(parts) >= 3:
-                    self.lbl_total_imported.config(text=f"Total Imported: {parts[1]}")
-                    self.lbl_ready_export.config(text=f"Ready for Export: {parts[2]}")
+                    self.lbl_total_imported.configure(text=f"Total Imported: {parts[1]}")
+                    self.lbl_ready_export.configure(text=f"Ready for Export: {parts[2]}")
             else:
                 parts = msg.split('|')
-                self.lbl_status.config(text=parts[0])
+                self.lbl_status.configure(text=parts[0])
                 if len(parts) > 1 and parts[1]: # This is max_timestamp
                     ts = parts[1]
                     self.settings.last_export_timestamp = ts
-                    self.entry_last_timestamp.delete(0, tk.END)
+                    self.entry_last_timestamp.delete(0, 'end')
                     self.entry_last_timestamp.insert(0, format_timestamp_for_ui(ts))
                     SettingsManager.save(self.settings)
         
@@ -288,9 +284,9 @@ class MainWindow(tk.Tk):
         out_file = os.path.join(out_folder, base_name)
 
         # Disable UI
-        self.btn_start.config(state="disabled")
-        self.btn_stop.config(state="normal")
-        self.btn_dry_run.config(state="disabled")
+        self.btn_start.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
+        self.btn_dry_run.configure(state="disabled")
         
         # Decide service
         if self.settings.mode == "import":
@@ -310,12 +306,12 @@ class MainWindow(tk.Tk):
             self._update_status(f"Error: Invalid log file path: {in_path}")
             return
             
-        self.btn_start.config(state="disabled")
-        self.btn_stop.config(state="disabled")
-        self.btn_dry_run.config(state="disabled")
+        self.btn_start.configure(state="disabled")
+        self.btn_stop.configure(state="disabled")
+        self.btn_dry_run.configure(state="disabled")
         
-        self.lbl_total_imported.config(text="Total Imported: ...")
-        self.lbl_ready_export.config(text="Ready for Export: ...")
+        self.lbl_total_imported.configure(text="Total Imported: ...")
+        self.lbl_ready_export.configure(text="Ready for Export: ...")
         
         self.current_service = ImportService(self.settings, self._update_status)
         out_folder = self.settings.output_folder_path
@@ -337,13 +333,13 @@ class MainWindow(tk.Tk):
             self.after(0, self._on_service_complete)
             
     def _on_service_complete(self):
-        self.btn_start.config(state="normal")
-        self.btn_stop.config(state="disabled")
-        self.btn_dry_run.config(state="normal")
+        self.btn_start.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
+        self.btn_dry_run.configure(state="normal")
         self.current_service = None
 
     def _stop(self):
         if self.current_service:
             self.current_service.stop()
             self._update_status("Stopping...")
-            self.btn_stop.config(state="disabled")
+            self.btn_stop.configure(state="disabled")
