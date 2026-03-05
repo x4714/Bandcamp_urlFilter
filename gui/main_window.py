@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 import re
 import threading
+import customtkinter as ctk
 
 def format_timestamp_for_ui(ts: str) -> str:
     """Converts '2026-02-16T12:00:00Z' to '16.02.2026 12:00' for display."""

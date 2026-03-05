@@ -1,2 +1,2 @@
 @echo off
-start "" pythonw main.py
+start "" .\.venv\Scripts\pythonw.exe main.py
