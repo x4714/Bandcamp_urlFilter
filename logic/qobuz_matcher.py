@@ -11,14 +11,22 @@ load_dotenv()
 
 # Basic credentials - User should define these in .env
 QOBUZ_APP_ID = os.getenv("QOBUZ_APP_ID", "100000000") # default open app id used by some web clients
+QOBUZ_USER_AUTH_TOKEN = os.getenv("QOBUZ_USER_AUTH_TOKEN", "")
 # Qobuz public web api sometimes uses different App IDs depending on region, but setting a default helps testing
 
 async def search_qobuz(session: aiohttp.ClientSession, query: str) -> dict:
-    url = f"https://www.qobuz.com/api.json/0.2/album/search?query={urllib.parse.quote(query)}&limit=10"
+    url = "https://www.qobuz.com/api.json/0.2/catalog/search"
+    params = {
+        "query": query,
+        "limit": 10,
+        "offset": 0
+    }
     headers = {"X-App-Id": QOBUZ_APP_ID}
+    if QOBUZ_USER_AUTH_TOKEN:
+        headers["X-User-Auth-Token"] = QOBUZ_USER_AUTH_TOKEN
     
     try:
-        async with session.get(url, headers=headers, timeout=10) as response:
+        async with session.get(url, params=params, headers=headers, timeout=10) as response:
             if response.status == 200:
                 data = await response.json()
                 return data
@@ -74,7 +82,7 @@ async def match_album(session: aiohttp.ClientSession, bandcamp_data: dict) -> di
     
     for qb_album in albums:
         if is_match(bandcamp_data, qb_album):
-            url_str = f"https://www.qobuz.com/album/{qb_album.get('id')}"
+            url_str = f"https://www.qobuz.com/album/-/{qb_album.get('id')}"
             # Some versions of Qobuz APIs return human readable URLs or just the ID:
             # So fallback to ID if no slug.
             return {
