@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import asyncio
+from datetime import date
 import aiohttp
 from io import StringIO
 from typing import List
@@ -23,6 +24,12 @@ min_tracks = st.sidebar.number_input("🔢 Min Tracks", min_value=1, value=None,
 max_tracks = st.sidebar.number_input("🔢 Max Tracks", min_value=1, value=None, step=1, help="Leave empty for no maximum")
 min_duration = st.sidebar.number_input("⏱️ Min Duration (min)", min_value=1, value=None, step=1, help="Leave empty for no minimum")
 max_duration = st.sidebar.number_input("⏱️ Max Duration (min)", min_value=1, value=None, step=1, help="Leave empty for no maximum")
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📅 Release Date")
+start_date = st.sidebar.date_input("Start Date", value=None, help="Filter for releases on or after this date.")
+end_date = st.sidebar.date_input("End Date", value=None, help="Filter for releases on or before this date.")
+st.sidebar.markdown("---")
 
 free_mode = st.sidebar.selectbox("💸 Pricing", options=["All", "Free", "Paid"], index=0)
 
@@ -51,10 +58,26 @@ async def process_urls(lines: List[str]):
     progress_bar = st.progress(0)
     
     # 1. Filter
-    log_area.text("Filtering input lines...")
+    log_area.text("Applying filters...")
     filtered_entries = filter_entries(lines, filter_config)
-    log_area.text(f"Found {len(filtered_entries)} URLs matching your filters out of {len(lines)} total lines.")
     
+    # Post-filter for date range
+    if start_date or end_date:
+        date_filtered_entries = []
+        for entry in filtered_entries:
+            if not entry.release_date:
+                continue
+            
+            start_ok = not start_date or entry.release_date >= start_date
+            end_ok = not end_date or entry.release_date <= end_date
+
+            if start_ok and end_ok:
+                date_filtered_entries.append(entry)
+        
+        filtered_entries = date_filtered_entries
+
+    log_area.text(f"Found {len(filtered_entries)} URLs matching your filters out of {len(lines)} total lines.")
+
     if not filtered_entries:
         st.warning("No URLs matched the filter criteria.")
         return

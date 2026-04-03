@@ -41,6 +41,10 @@ def is_match(bandcamp_data: dict, qobuz_album: dict) -> bool:
     """Matches Qobuz API album data against parsed Bandcamp data."""
     if not qobuz_album:
         return False
+
+    # Only match if the album is streamable on Qobuz
+    if not qobuz_album.get("streamable", False):
+        return False
         
     qb_artist = qobuz_album.get("artist", {}).get("name", "")
     qb_album = qobuz_album.get("title", "")

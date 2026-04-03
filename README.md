@@ -11,7 +11,7 @@ This tool helps you:
 ## 🚀 Funktionen
 
 - **Web-UI (Streamlit)**: User-friendly interface for easy interaction.
-- **Bandcamp URL Filtering**: Filter input URLs by genre/tag, location, minimum/maximum track count, and pricing (free/paid/all).
+- **Bandcamp URL Filtering**: Filter input URLs by genre/tag, location, release date range, minimum/maximum track count, and pricing (free/paid/all).
 - **Bandcamp Metadata Scraping**: Automatically fetches artist, album title, track count, etc., from Bandcamp pages.
 - **Qobuz Matching**: Searches Qobuz for exact matches based on Bandcamp metadata.
 - **Fuzzy Matching**: Uses `rapidfuzz` for robust artist and album title matching.
