@@ -12,6 +12,7 @@ This tool helps you:
 
 - **Web-UI (Streamlit)**: User-friendly interface for easy interaction.
 - **Bandcamp URL Filtering**: Filter input URLs by genre/tag, location, release date range, minimum/maximum track count, and pricing (free/paid/all).
+- **Flexible Input Parsing**: Accepts both raw Bandcamp URL lists and enriched IRC/log-style lines.
 - **Bandcamp Metadata Scraping**: Automatically fetches artist, album title, track count, etc., from Bandcamp pages.
 - **Qobuz Matching**: Searches Qobuz for exact matches based on Bandcamp metadata.
 - **Fuzzy Matching**: Uses `rapidfuzz` for robust artist and album title matching.
@@ -66,7 +67,7 @@ QOBUZ_USER_AUTH_TOKEN=your_qobuz_token_here
    python -m streamlit run app.py
    ```
 
-2. Or use the provided launch scripts. Each script will create a virtual environment if needed, install dependencies, and validate required Qobuz settings:
+2. Or use the provided launch scripts. Each script will create a virtual environment if needed, install dependencies, and validate Qobuz settings:
    - Bash: `./run.sh`
    - Fish: `./run.fish`
    - macOS (Finder-friendly): `./run.command`
@@ -81,9 +82,10 @@ xattr -d com.apple.quarantine run.command
 Then run `./run.command` again (or double-click it in Finder).
 
 3. The application opens automatically in your web browser.
-4. Upload a `.txt` or `.log` file containing Bandcamp URLs.
+4. Upload a `.txt` or `.log` file containing Bandcamp URLs (raw URLs or enriched log lines).
 5. Configure the filters in the sidebar.
 6. Click "Process" to filter the URLs and find Qobuz matches.
+7. Use "Stop / Cancel" to stop after the current in-flight batch and keep partial results.
 
 ## 🧾 Export
 

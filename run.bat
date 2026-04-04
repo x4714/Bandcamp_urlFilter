@@ -1,4 +1,5 @@
 @echo off
+setlocal
 echo Starting Bandcamp to Qobuz Matcher Web UI...
 if not exist .venv\Scripts\python.exe (
     echo Creating virtual environment...
@@ -12,20 +13,22 @@ if not exist .venv\Scripts\python.exe (
     call .venv\Scripts\activate.bat
 )
 
-echo Checking required environment variables...
-python -c "import os, sys, pathlib; p=pathlib.Path('.env'); text=p.read_text() if p.exists() else ''; [os.environ.setdefault(k.strip(), v.strip().strip(chr(34)).strip(chr(39))) for line in text.splitlines() if line.strip() and not line.strip().startswith('#') and '=' in line for k, v in [line.split('=',1)]]; required=['QOBUZ_USER_AUTH_TOKEN']; missing=[k for k in required if not os.environ.get(k)];
-if missing:
-    print('Missing required environment variables: ' + ', '.join(missing));
-    print();
-    print('Create a .env file in the project root with:');
-    print('PYTHONPATH=.');
-    print('QOBUZ_APP_ID=100000000');
-    print('QOBUZ_USER_AUTH_TOKEN=your_qobuz_token_here');
-    sys.exit(1)
-"
-if %ERRORLEVEL% NEQ 0 (
-    goto error
+echo Checking Qobuz environment variables (optional for Dry Run)...
+if not exist .env (
+    echo Warning: .env not found. Dry Run mode will still work.
+) else (
+    findstr /R /C:"^[ ]*QOBUZ_USER_AUTH_TOKEN[ ]*=" .env >nul
+    if errorlevel 1 (
+        echo Warning: QOBUZ_USER_AUTH_TOKEN is missing from .env. Dry Run mode will still work.
+    )
 )
 
-python -m streamlit run app.py
+python -m streamlit run app.py || goto error
 pause
+exit /b 0
+
+:error
+echo.
+echo Launcher failed. Review messages above and fix the issue, then try again.
+pause
+exit /b 1

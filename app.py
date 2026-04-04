@@ -9,10 +9,13 @@ from datetime import date
 import aiohttp
 from io import StringIO
 from typing import List
+from dotenv import load_dotenv
 
 from logic.bandcamp_filter import filter_entries
 from logic.metadata_scraper import scrape_bandcamp_metadata
 from logic.qobuz_matcher import match_album
+
+load_dotenv()
 
 st.set_page_config(page_title="Bandcamp to Qobuz Matcher", layout="wide")
 
@@ -25,6 +28,8 @@ if "process_complete" not in st.session_state:
     st.session_state.process_complete = False
 if "export_done" not in st.session_state:
     st.session_state.export_done = False
+if "cancel_requested" not in st.session_state:
+    st.session_state.cancel_requested = False
 
 def open_in_default_app(path: str) -> None:
     target = os.path.abspath(path)
@@ -121,7 +126,18 @@ async def process_urls(lines: List[str]):
         
         filtered_entries = date_filtered_entries
 
-    log_area.text(f"Found {len(filtered_entries)} URLs matching your filters out of {len(lines)} total lines.")
+    # Remove duplicates to avoid duplicate HTTP calls and repeated output rows.
+    deduped_entries = []
+    seen_urls = set()
+    for entry in filtered_entries:
+        key = entry.url.strip().lower()
+        if key in seen_urls:
+            continue
+        seen_urls.add(key)
+        deduped_entries.append(entry)
+    filtered_entries = deduped_entries
+
+    log_area.text(f"Found {len(filtered_entries)} unique URLs matching your filters out of {len(lines)} total lines.")
 
     if not filtered_entries:
         st.warning("No URLs matched the filter criteria.")
@@ -148,65 +164,92 @@ async def process_urls(lines: List[str]):
         )
         return
 
+    load_dotenv(override=True)
+    if not os.getenv("QOBUZ_USER_AUTH_TOKEN"):
+        st.error("QOBUZ_USER_AUTH_TOKEN is missing. Add it in `.env`, then run again, or use Dry Run mode.")
+        return
+
     # Reset session state for a new run
     st.session_state.results = []
     st.session_state.process_complete = False
     st.session_state.export_done = False
+    st.session_state.cancel_requested = False
 
     # 2. Process
     total = len(filtered_entries)
-    
+
+    async def process_single_entry(entry):
+        bc_data = await scrape_bandcamp_metadata(entry.url, session)
+        if bc_data.get("status") != "success":
+            return {
+                "Artist": entry.artist,
+                "Album": entry.title,
+                "Bandcamp Link": entry.url,
+                "Qobuz Link": "",
+                "Status": "⚠️ Error scraping Bandcamp"
+            }
+
+        match_data = await match_album(session, bc_data)
+        if match_data.get("status") == "matched":
+            return {
+                "Artist": bc_data.get("artist"),
+                "Album": bc_data.get("album"),
+                "Bandcamp Link": bc_data.get("url"),
+                "Qobuz Link": match_data.get("qobuz_url"),
+                "Status": "✅ Matched"
+            }
+
+        return {
+            "Artist": bc_data.get("artist"),
+            "Album": bc_data.get("album"),
+            "Bandcamp Link": bc_data.get("url"),
+            "Qobuz Link": "",
+            "Status": "❌ No Match on Qobuz"
+        }
+
+    max_concurrent = 5
+    completed = 0
+
     # Run async sessions
     async with aiohttp.ClientSession() as session:
-        for i, entry in enumerate(filtered_entries):
-            log_area.text(f"[{i+1}/{total}] Fetching Bandcamp Metadata for {entry.url}...")
-            bc_data = await scrape_bandcamp_metadata(entry.url, session)
-            
-            if bc_data.get("status") == "success":
-                log_area.text(f"[{i+1}/{total}] Searching Qobuz for {bc_data.get('artist')} - {bc_data.get('album')}...")
-                match_data = await match_album(session, bc_data)
-                
-                if match_data.get("status") == "matched":
-                    st.session_state.results.append({
-                        "Artist": bc_data.get("artist"),
-                        "Album": bc_data.get("album"),
-                        "Bandcamp Link": bc_data.get("url"),
-                        "Qobuz Link": match_data.get("qobuz_url"),
-                        "Status": "✅ Matched"
-                    })
-                else:
-                    st.session_state.results.append({
-                        "Artist": bc_data.get("artist"),
-                        "Album": bc_data.get("album"),
-                        "Bandcamp Link": bc_data.get("url"),
-                        "Qobuz Link": "",
-                        "Status": "❌ No Match on Qobuz"
-                    })
-            else:
-                st.session_state.results.append({
-                    "Artist": entry.artist,
-                    "Album": entry.title,
-                    "Bandcamp Link": entry.url,
-                    "Qobuz Link": "",
-                    "Status": "⚠️ Error scraping Bandcamp"
-                })
-                
-            progress_bar.progress((i + 1) / total)
-            
-    st.session_state.process_complete = True
-    log_area.text(f"Complete! We found {len([r for r in st.session_state.results if r['Qobuz Link']])} out of {total} matches.")
+        for start_idx in range(0, total, max_concurrent):
+            if st.session_state.cancel_requested:
+                break
+
+            chunk = filtered_entries[start_idx:start_idx + max_concurrent]
+            log_area.text(f"Processing {start_idx + 1} to {start_idx + len(chunk)} of {total}...")
+            tasks = [asyncio.create_task(process_single_entry(entry)) for entry in chunk]
+
+            for task in asyncio.as_completed(tasks):
+                row = await task
+                st.session_state.results.append(row)
+                completed += 1
+                progress_bar.progress(completed / total)
+
+    matched_count = len([r for r in st.session_state.results if r["Qobuz Link"]])
+    if st.session_state.cancel_requested:
+        log_area.text(f"Cancelled. We found {matched_count} out of {total} matches before stopping.")
+        st.session_state.process_complete = False
+    else:
+        st.session_state.process_complete = True
+        log_area.text(f"Complete! We found {matched_count} out of {total} matches.")
         
 
 col1, col2 = st.columns([1, 5])
 with col1:
     process_btn = st.button("Process", type="primary")
 with col2:
-    st.button("Stop / Cancel", help="Cancels the current search and displays the results so far.")
+    stop_btn = st.button("Stop / Cancel", help="Stops after the current in-flight batch and shows partial results.")
+
+if stop_btn:
+    st.session_state.cancel_requested = True
+    st.info("Stop requested. Processing will end after the current batch.")
 
 if process_btn:
     if uploaded_file is not None:
         # To convert to a list of strings
-        stringio = StringIO(uploaded_file.getvalue().decode("utf-8"))
+        st.session_state.cancel_requested = False
+        stringio = StringIO(uploaded_file.getvalue().decode("utf-8", errors="ignore"))
         lines = stringio.readlines()
         
         # Because Streamlit doesn't support async event loops natively in its top level without a workaround,

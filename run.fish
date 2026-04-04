@@ -21,9 +21,9 @@ else
     source .venv/bin/activate
 end
 
-echo "Checking required environment variables..."
+echo "Checking Qobuz environment variables (optional for Dry Run)..."
 python - <<'PY'
-import os, pathlib, sys
+import os, pathlib
 path = pathlib.Path('.env')
 if path.exists():
     for line in path.read_text().splitlines():
@@ -32,16 +32,13 @@ if path.exists():
             continue
         key, value = line.split('=', 1)
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
-required = ['QOBUZ_USER_AUTH_TOKEN']
-missing = [key for key in required if not os.environ.get(key)]
-if missing:
-    print('Missing required environment variables:', ', '.join(missing))
+if not os.environ.get('QOBUZ_USER_AUTH_TOKEN'):
+    print('Warning: QOBUZ_USER_AUTH_TOKEN is missing.')
     print()
-    print('Create a .env file in the project root with:')
+    print('Dry Run mode will still work, but Qobuz matching requires this in .env:')
     print('PYTHONPATH=.')
     print('QOBUZ_APP_ID=100000000')
     print('QOBUZ_USER_AUTH_TOKEN=your_qobuz_token_here')
-    sys.exit(1)
 PY
 
 python -m streamlit run app.py

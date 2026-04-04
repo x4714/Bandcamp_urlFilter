@@ -1,29 +1,30 @@
 import os
 import aiohttp
-import asyncio
 import logging
 from rapidfuzz import fuzz
 from dotenv import load_dotenv
-import urllib.parse
 
 logger = logging.getLogger(__name__)
 load_dotenv()
 
-# Basic credentials - User should define these in .env
-QOBUZ_APP_ID = os.getenv("QOBUZ_APP_ID", "100000000") # default open app id used by some web clients
-QOBUZ_USER_AUTH_TOKEN = os.getenv("QOBUZ_USER_AUTH_TOKEN", "")
-# Qobuz public web api sometimes uses different App IDs depending on region, but setting a default helps testing
+def get_qobuz_credentials() -> tuple[str, str]:
+    # Reload values so .env edits are picked up without restarting Streamlit.
+    load_dotenv(override=True)
+    app_id = os.getenv("QOBUZ_APP_ID", "100000000")
+    user_token = os.getenv("QOBUZ_USER_AUTH_TOKEN", "")
+    return app_id, user_token
 
 async def search_qobuz(session: aiohttp.ClientSession, query: str) -> dict:
     url = "https://www.qobuz.com/api.json/0.2/catalog/search"
+    qobuz_app_id, qobuz_user_auth_token = get_qobuz_credentials()
     params = {
         "query": query,
         "limit": 10,
         "offset": 0
     }
-    headers = {"X-App-Id": QOBUZ_APP_ID}
-    if QOBUZ_USER_AUTH_TOKEN:
-        headers["X-User-Auth-Token"] = QOBUZ_USER_AUTH_TOKEN
+    headers = {"X-App-Id": qobuz_app_id}
+    if qobuz_user_auth_token:
+        headers["X-User-Auth-Token"] = qobuz_user_auth_token
     
     try:
         async with session.get(url, params=params, headers=headers, timeout=10) as response:
