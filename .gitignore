@@ -42,3 +42,4 @@ venv.bak/
 settings.json
 *.txt
 !requirements.txt
+run_rip.bat

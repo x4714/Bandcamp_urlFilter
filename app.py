@@ -20,6 +20,8 @@ if "results" not in st.session_state:
     st.session_state.results = []
 if "process_complete" not in st.session_state:
     st.session_state.process_complete = False
+if "export_done" not in st.session_state:
+    st.session_state.export_done = False
 
 # Sidebar Configuration
 st.sidebar.header("Filter Configuration")
@@ -133,6 +135,7 @@ async def process_urls(lines: List[str]):
     # Reset session state for a new run
     st.session_state.results = []
     st.session_state.process_complete = False
+    st.session_state.export_done = False
 
     # 2. Process
     total = len(filtered_entries)
@@ -224,3 +227,55 @@ if not dry_run and st.session_state.results:
         file_name="qobuz_exports.txt",
         mime="text/plain"
     )
+
+    st.markdown("---")
+    st.subheader("💾 Local Export & Batch Generator")
+    st.markdown("Split Qobuz links into multiple text files and generate a batch downloader script.")
+    
+    col_exp1, col_exp2 = st.columns([1, 2])
+    with col_exp1:
+        max_links = st.number_input("Max links per file", min_value=1, value=10, step=1)
+        export_btn = st.button("Export to Local Disk", type="primary")
+        
+    with col_exp2:
+        if export_btn:
+            try:
+                valid_urls = [r["Qobuz Link"] for r in st.session_state.results if r["Qobuz Link"]]
+                if not valid_urls:
+                    st.warning("No valid Qobuz links to export.")
+                else:
+                    export_dir = os.path.abspath("exports")
+                    os.makedirs(export_dir, exist_ok=True)
+                    
+                    batch_files = []
+                    total_batches = (len(valid_urls) + max_links - 1) // max_links
+                    
+                    for i in range(total_batches):
+                        batch_urls = valid_urls[i * max_links : (i + 1) * max_links]
+                        batch_num = f"{i + 1:02d}"
+                        filename = f"qobuz_batch_{batch_num}.txt"
+                        filepath = os.path.join(export_dir, filename)
+                        
+                        with open(filepath, "w", encoding="utf-8") as f:
+                            f.write("\n".join(batch_urls) + "\n")
+                            
+                        batch_files.append(filename)
+                        
+                    bat_path = os.path.abspath("run_rip.bat")
+                    with open(bat_path, "w", encoding="utf-8") as f:
+                        f.write("@echo off\n")
+                        for fname in batch_files:
+                            f.write(f"call rip file exports/{fname}\n")
+                        f.write("pause\n")
+                        
+                    st.success(f"Successfully created {total_batches} batch file(s) in `/exports/` and generated `run_rip.bat`.")
+                    st.session_state.export_done = True
+            except Exception as e:
+                st.error(f"Error during export: {e}")
+                
+    if st.session_state.export_done:
+        if st.button("📂 Open Exports Folder"):
+            try:
+                os.startfile(os.path.abspath("exports"))
+            except Exception as e:
+                st.error(f"Could not open folder: {e}")
