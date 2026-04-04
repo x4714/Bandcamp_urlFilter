@@ -8,7 +8,7 @@ This tool helps you:
 - Search for matching albums on Qobuz.
 - Export Qobuz links for matched albums.
 
-## 🚀 Funktionen
+## 🚀 Features
 
 - **Web-UI (Streamlit)**: User-friendly interface for easy interaction.
 - **Bandcamp URL Filtering**: Filter input URLs by genre/tag, location, release date range, minimum/maximum track count, and pricing (free/paid/all).
@@ -20,50 +20,50 @@ This tool helps you:
 
 ## 🛠️ Installation
 
-### Voraussetzungen
-- Python 3.10 oder höher
-- `pip` Paketmanager
+### Prerequisites
+- Python 3.10 or higher
+- `pip` package manager
 
-### Schritte
-1. Repository klonen oder herunterladen:
+### Steps
+1. Clone or download the repository:
    ```bash
    git clone https://github.com/HauZ22/Bandcamp_urlFilter.git
    cd Bandcamp_urlFilter
    ```
 
-2. Virtuelle Umgebung erstellen und aktivieren (empfohlen):
+2. Create and activate a virtual environment (recommended):
    ```bash
    python -m venv .venv
-   source .venv/bin/activate  # Unter Windows: .venv\Scripts\activate
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
-3. Abhängigkeiten installieren:
+3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-   (Sie müssen möglicherweise eine `requirements.txt` Datei erstellen, die `streamlit`, `pandas`, `aiohttp`, `rapidfuzz`, `python-dotenv`, `beautifulsoup4` enthält.)
+   (You may need to create a `requirements.txt` file containing `streamlit`, `pandas`, `aiohttp`, `rapidfuzz`, `python-dotenv`, `beautifulsoup4`.)
 
-## ⚙️ Konfiguration (Qobuz API)
+## ⚙️ Configuration (Qobuz API)
 
-Für die Metadaten-Suche bei Qobuz werden API-Zugangsdaten benötigt. Erstelle dazu im Hauptverzeichnis eine `.env` Datei. Diese Datei wird von Git ignoriert und enthält sensible Daten.
+API credentials are required for Qobuz metadata search. Create a `.env` file in the main directory. This file is ignored by Git and contains sensitive data.
 
-Beispiel für den Inhalt der `.env` Datei:
+Example of the `.env` file content:
 ```env
-# Wichtig: Damit Python die lokalen Verzeichnisse (z.B. logic, core) als Module erkennt
+# Important: So that Python recognizes local directories (e.g., logic) as modules
 PYTHONPATH=.
-# Optional: Setze deine eigene Qobuz App ID (Standard ist ein offener Web-Client 100000000)
+# Optional: Set your own Qobuz App ID (default is an open web client 100000000)
 QOBUZ_APP_ID=100000000
-# Erforderlich (je nach Region/Account-Typ): Setze deinen User Auth Token für Qobuz
-QOBUZ_USER_AUTH_TOKEN=dein_qobuz_token_hier
+# Required (depending on region/account type): Set your user Auth Token for Qobuz
+QOBUZ_USER_AUTH_TOKEN=your_qobuz_token_here
 ```
 
-## 📖 Nutzung
+## 📖 Usage
 
-1. Starten Sie die Streamlit-Anwendung:
+1. Start the Streamlit application:
    ```bash
    python -m streamlit run app.py
    ```
-2. Die Anwendung öffnet sich automatisch in Ihrem Webbrowser.
-3. Laden Sie eine `.txt` oder `.log`-Datei mit Bandcamp-URLs hoch.
-4. Konfigurieren Sie die Filter in der Seitenleiste.
-5. Klicken Sie auf "Process", um die URLs zu filtern und Qobuz-Matches zu finden.
+2. The application opens automatically in your web browser.
+3. Upload a `.txt` or `.log` file containing Bandcamp URLs.
+4. Configure the filters in the sidebar.
+5. Click "Process" to filter the URLs and find Qobuz matches.

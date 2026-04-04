@@ -35,23 +35,23 @@ st.sidebar.subheader("⚙️ Settings")
 if st.sidebar.button("📝 Open .env File for Qobuz Token -> see README.md"):
     env_path = ".env"
     if not os.path.exists(env_path):
-        template = """# Wichtig: Damit Python die lokalen Verzeichnisse (z.B. logic, core) als Module erkennt
+        template = """# Important: So that Python recognizes local directories (e.g., logic) as modules
 PYTHONPATH=.
-# Optional: Setze deine eigene Qobuz App ID (Standard ist ein offener Web-Client 100000000)
+# Optional: Set your own Qobuz App ID (default is an open web client 100000000)
 QOBUZ_APP_ID=100000000
-# Erforderlich (je nach Region/Account-Typ): Setze deinen User Auth Token für Qobuz
+# Required (depending on region/account type): Set your user Auth Token for Qobuz
 QOBUZ_USER_AUTH_TOKEN="""
         try:
             with open(env_path, "w", encoding="utf-8") as f:
                 f.write(template)
         except Exception as e:
-            st.sidebar.error(f"Fehler beim Erstellen der .env Datei: {e}")
+            st.sidebar.error(f"Error creating the .env file: {e}")
 
     try:
         # Windows command to open a file with its default associated program
         os.startfile(env_path)
     except Exception as e:
-        st.sidebar.error(f"Konnte .env nicht öffnen: {e}")
+        st.sidebar.error(f"Could not open .env: {e}")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("📅 Release Date")
@@ -182,7 +182,7 @@ col1, col2 = st.columns([1, 5])
 with col1:
     process_btn = st.button("Process", type="primary")
 with col2:
-    st.button("Stop / Cancel", help="Bricht die aktuelle Suche ab und zeigt die bisherigen Ergebnisse.")
+    st.button("Stop / Cancel", help="Cancels the current search and displays the results so far.")
 
 if process_btn:
     if uploaded_file is not None:
