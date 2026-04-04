@@ -35,7 +35,7 @@ free_mode = st.sidebar.selectbox("💸 Pricing", options=["All", "Free", "Paid"]
 
 dry_run = st.sidebar.checkbox("🏜️ Dry Run", value=False, help="Only apply Bandcamp filter, skip Qobuz search")
 
-uploaded_file = st.file_uploader("Upload .txt file with Bandcamp URLs", type=['txt'])
+uploaded_file = st.file_uploader("Upload .txt or .log file with Bandcamp URLs", type=['txt', 'log'])
 
 def get_download_link(data_list: List[dict]) -> str:
     # Extracts the qobuz URLs to export file
@@ -91,6 +91,15 @@ async def process_urls(lines: List[str]):
                 "Bandcamp URL": st.column_config.LinkColumn()
             },
             use_container_width=True
+        )
+        
+        # Download button for filtered Bandcamp URLs
+        bc_urls = "\n".join([e.url for e in filtered_entries if e.url])
+        st.download_button(
+            label="Download Filtered Bandcamp Links (.txt)",
+            data=bc_urls,
+            file_name="filtered_bandcamp_urls.txt",
+            mime="text/plain"
         )
         return
 
@@ -170,4 +179,4 @@ if st.button("Process", type="primary"):
         # we can use asyncio.run to kick it off
         asyncio.run(process_urls(lines))
     else:
-        st.error("Please upload a .txt file first.")
+        st.error("Please upload a .txt or .log file first.")

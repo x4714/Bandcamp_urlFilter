@@ -62,6 +62,6 @@ QOBUZ_USER_AUTH_TOKEN=dein_qobuz_token_hier
    python -m streamlit run app.py
    ```
 2. Die Anwendung öffnet sich automatisch in Ihrem Webbrowser.
-3. Laden Sie eine `.txt`-Datei mit Bandcamp-URLs hoch.
+3. Laden Sie eine `.txt` oder `.log`-Datei mit Bandcamp-URLs hoch.
 4. Konfigurieren Sie die Filter in der Seitenleiste.
 5. Klicken Sie auf "Process", um die URLs zu filtern und Qobuz-Matches zu finden.
