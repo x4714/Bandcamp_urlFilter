@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import os
 import asyncio
+import subprocess
+import shutil
+import sys
 from datetime import date
 import aiohttp
 from io import StringIO
@@ -22,6 +25,20 @@ if "process_complete" not in st.session_state:
     st.session_state.process_complete = False
 if "export_done" not in st.session_state:
     st.session_state.export_done = False
+
+def open_in_default_app(path: str) -> None:
+    target = os.path.abspath(path)
+    if os.name == "nt":
+        os.startfile(target)  # type: ignore[attr-defined]
+        return
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", target])
+        return
+
+    opener = shutil.which("xdg-open")
+    if not opener:
+        raise RuntimeError("Could not find xdg-open to launch files/folders.")
+    subprocess.Popen([opener, target])
 
 # Sidebar Configuration
 st.sidebar.header("Filter Configuration")
@@ -50,8 +67,7 @@ QOBUZ_USER_AUTH_TOKEN="""
             st.sidebar.error(f"Error creating the .env file: {e}")
 
     try:
-        # Windows command to open a file with its default associated program
-        os.startfile(env_path)
+        open_in_default_app(env_path)
     except Exception as e:
         st.sidebar.error(f"Could not open .env: {e}")
 
@@ -267,8 +283,22 @@ if not dry_run and st.session_state.results:
                         for fname in batch_files:
                             f.write(f"call rip file exports/{fname}\n")
                         f.write("pause\n")
-                        
-                    st.success(f"Successfully created {total_batches} batch file(s) in `/exports/` and generated `run_rip.bat`.")
+
+                    sh_path = os.path.abspath("run_rip.sh")
+                    with open(sh_path, "w", encoding="utf-8") as f:
+                        f.write("#!/usr/bin/env bash\n")
+                        f.write("set -e\n\n")
+                        for fname in batch_files:
+                            f.write(f"rip file \"exports/{fname}\"\n")
+                        f.write("printf '\nPress Enter to exit...'; read -r _\n")
+
+                    try:
+                        os.chmod(sh_path, 0o755)
+                    except Exception:
+                        pass
+
+                    st.success(
+                        f"Successfully created {total_batches} batch file(s) in `/exports/` and generated `run_rip.bat` and `run_rip.sh`.")
                     st.session_state.export_done = True
             except Exception as e:
                 st.error(f"Error during export: {e}")
@@ -276,6 +306,6 @@ if not dry_run and st.session_state.results:
     if st.session_state.export_done:
         if st.button("📂 Open Exports Folder"):
             try:
-                os.startfile(os.path.abspath("exports"))
+                open_in_default_app("exports")
             except Exception as e:
                 st.error(f"Could not open folder: {e}")
