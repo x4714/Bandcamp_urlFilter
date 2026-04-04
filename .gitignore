@@ -43,3 +43,4 @@ settings.json
 *.txt
 !requirements.txt
 run_rip.bat
+.codex

@@ -54,8 +54,8 @@ Example of the `.env` file content:
 ```env
 # Important: So that Python recognizes local directories (e.g., logic) as modules
 PYTHONPATH=.
-# Optional: Set your own Qobuz App ID (default is an open web client 100000000)
-QOBUZ_APP_ID=100000000
+# Optional: Set your own Qobuz App ID. If omitted, the app auto-fetches it from Qobuz Web Player.
+# QOBUZ_APP_ID=
 # Required (depending on region/account type): Set your user Auth Token for Qobuz
 QOBUZ_USER_AUTH_TOKEN=your_qobuz_token_here
 ```

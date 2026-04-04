@@ -37,7 +37,7 @@ if not os.environ.get('QOBUZ_USER_AUTH_TOKEN'):
     print()
     print('Dry Run mode will still work, but Qobuz matching requires this in .env:')
     print('PYTHONPATH=.')
-    print('QOBUZ_APP_ID=100000000')
+    print('# Optional: QOBUZ_APP_ID (auto-fetched if omitted)')
     print('QOBUZ_USER_AUTH_TOKEN=your_qobuz_token_here')
 PY
 

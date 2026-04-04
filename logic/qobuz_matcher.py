@@ -1,22 +1,74 @@
 import os
+import asyncio
 import aiohttp
 import logging
+import re
 from rapidfuzz import fuzz
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 load_dotenv()
+_AUTO_DISCOVERED_APP_ID: str = ""
+
+
+async def _auto_discover_qobuz_app_id(session: aiohttp.ClientSession) -> str:
+    global _AUTO_DISCOVERED_APP_ID
+    if _AUTO_DISCOVERED_APP_ID:
+        return _AUTO_DISCOVERED_APP_ID
+
+    try:
+        async with session.get("https://play.qobuz.com/", timeout=10) as response:
+            if response.status != 200:
+                return ""
+            html = await response.text()
+    except Exception:
+        return ""
+
+    bundle_match = re.search(r'src="(/resources/[^"]*bundle\.js)"', html)
+    if not bundle_match:
+        return ""
+
+    bundle_url = f"https://play.qobuz.com{bundle_match.group(1)}"
+    try:
+        async with session.get(bundle_url, timeout=10) as response:
+            if response.status != 200:
+                return ""
+            js = await response.text()
+    except Exception:
+        return ""
+
+    production_match = re.search(
+        r'"?production"?\s*:\s*\{.*?"?api"?\s*:\s*\{.*?"?appId"?\s*:\s*"(\d+)"',
+        js,
+        re.DOTALL
+    )
+    if not production_match:
+        return ""
+
+    _AUTO_DISCOVERED_APP_ID = production_match.group(1)
+    return _AUTO_DISCOVERED_APP_ID
 
 def get_qobuz_credentials() -> tuple[str, str]:
     # Reload values so .env edits are picked up without restarting Streamlit.
     load_dotenv(override=True)
-    app_id = os.getenv("QOBUZ_APP_ID", "100000000")
+    app_id = os.getenv("QOBUZ_APP_ID", "")
     user_token = os.getenv("QOBUZ_USER_AUTH_TOKEN", "")
     return app_id, user_token
 
-async def search_qobuz(session: aiohttp.ClientSession, query: str) -> dict:
+async def search_qobuz(
+    session: aiohttp.ClientSession,
+    query: str,
+    max_retries: int = 3,
+    base_delay: float = 1.5
+) -> dict:
     url = "https://www.qobuz.com/api.json/0.2/catalog/search"
     qobuz_app_id, qobuz_user_auth_token = get_qobuz_credentials()
+    if not qobuz_app_id:
+        qobuz_app_id = await _auto_discover_qobuz_app_id(session)
+    if not qobuz_app_id:
+        logger.warning("QOBUZ_APP_ID is missing and auto-discovery failed.")
+        return {}
+
     params = {
         "query": query,
         "limit": 10,
@@ -26,17 +78,34 @@ async def search_qobuz(session: aiohttp.ClientSession, query: str) -> dict:
     if qobuz_user_auth_token:
         headers["X-User-Auth-Token"] = qobuz_user_auth_token
     
-    try:
-        async with session.get(url, params=params, headers=headers, timeout=10) as response:
-            if response.status == 200:
-                data = await response.json()
-                return data
-            else:
+    for attempt in range(max_retries):
+        try:
+            async with session.get(url, params=params, headers=headers, timeout=10) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    return data
+
+                if response.status in (429, 500, 502, 503, 504):
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(
+                        f"Qobuz transient HTTP {response.status} for query '{query}'. Retrying in {delay}s..."
+                    )
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(delay)
+                    continue
+
                 logger.warning(f"Qobuz API returned {response.status} for query: {query}")
                 return {}
-    except Exception as e:
-        logger.error(f"Error fetching from Qobuz: {e}")
-        return {}
+        except asyncio.TimeoutError:
+            delay = base_delay * (2 ** attempt)
+            logger.warning(f"Qobuz timeout for query '{query}'. Retrying in {delay}s...")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(delay)
+        except Exception as e:
+            logger.error(f"Error fetching from Qobuz: {e}")
+            return {}
+
+    return {}
 
 def is_match(bandcamp_data: dict, qobuz_album: dict) -> bool:
     """Matches Qobuz API album data against parsed Bandcamp data."""

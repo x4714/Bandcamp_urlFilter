@@ -13,17 +13,19 @@ async def fetch_with_retries(session: aiohttp.ClientSession, url: str, max_retri
             async with session.get(url, timeout=10) as response:
                 if response.status == 200:
                     return await response.text()
-                elif response.status == 429: # Too Many Requests
+                elif response.status in (429, 500, 502, 503, 504):
                     delay = base_delay * (2 ** attempt)
-                    logger.warning(f"Rate limited (429) out of {url}. Waiting {delay}s...")
-                    await asyncio.sleep(delay)
+                    logger.warning(f"Transient HTTP {response.status} for {url}. Waiting {delay}s...")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(delay)
                 else:
                     logger.warning(f"Failed to fetch {url}. Status: {response.status}")
                     return ""
         except asyncio.TimeoutError:
             logger.warning(f"Timeout fetching {url}.")
             delay = base_delay * (2 ** attempt)
-            await asyncio.sleep(delay)
+            if attempt < max_retries - 1:
+                await asyncio.sleep(delay)
         except Exception as e:
             logger.error(f"Error fetching {url}: {e}")
             return ""

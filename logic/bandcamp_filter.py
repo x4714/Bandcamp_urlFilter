@@ -143,10 +143,9 @@ def filter_entries(lines: List[str], filters: Dict[str, Any]) -> List[LogEntry]:
 
         if free_mode in ["free", "paid"]:
             flag = entry.free_flag.strip().lower()
-            is_free = flag == "free"
-            if free_mode == "free" and not is_free:
+            if free_mode == "free" and flag != "free":
                 continue
-            if free_mode == "paid" and is_free:
+            if free_mode == "paid" and flag != "paid":
                 continue
 
         results.append(entry)
