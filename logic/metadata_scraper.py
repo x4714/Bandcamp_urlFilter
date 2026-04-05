@@ -1,30 +1,106 @@
 import json
 import asyncio
+import random
+import time
+from email.utils import parsedate_to_datetime
+from typing import Optional
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 import aiohttp
 import logging
 
 logger = logging.getLogger(__name__)
-REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10)
+REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=20)
 
-async def fetch_with_retries(session: aiohttp.ClientSession, url: str, max_retries: int = 3, base_delay: float = 2.0) -> str:
+
+class HostRateLimiter:
+    """Applies a minimum delay between requests per host."""
+
+    def __init__(self, min_interval_seconds: float = 1.0):
+        self.min_interval_seconds = max(0.0, float(min_interval_seconds))
+        self._next_allowed_by_host = {}
+        self._lock = asyncio.Lock()
+
+    async def wait(self, url: str) -> None:
+        if self.min_interval_seconds <= 0:
+            return
+
+        host = (urlparse(url).hostname or "").lower()
+        if not host:
+            return
+
+        sleep_for = 0.0
+        async with self._lock:
+            now = time.monotonic()
+            next_allowed = self._next_allowed_by_host.get(host, now)
+            if next_allowed > now:
+                sleep_for = next_allowed - now
+                now = next_allowed
+            self._next_allowed_by_host[host] = now + self.min_interval_seconds
+
+        if sleep_for > 0:
+            await asyncio.sleep(sleep_for)
+
+
+def _parse_retry_after_seconds(value: str) -> float:
+    if not value:
+        return 0.0
+
+    value = value.strip()
+    if not value:
+        return 0.0
+
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+
+    try:
+        when = parsedate_to_datetime(value)
+        if when.tzinfo is None:
+            return 0.0
+        delay = when.timestamp() - time.time()
+        return max(0.0, delay)
+    except Exception:
+        return 0.0
+
+
+async def fetch_with_retries(
+    session: aiohttp.ClientSession,
+    url: str,
+    max_retries: int = 5,
+    base_delay: float = 2.0,
+    rate_limiter: Optional[HostRateLimiter] = None,
+) -> str:
     """Fetches text with exponential backoff on failure."""
     for attempt in range(max_retries):
         try:
+            if rate_limiter is not None:
+                await rate_limiter.wait(url)
             async with session.get(url, timeout=REQUEST_TIMEOUT) as response:
                 if response.status == 200:
                     return await response.text()
                 elif response.status in (429, 500, 502, 503, 504):
-                    delay = base_delay * (2 ** attempt)
-                    logger.warning(f"Transient HTTP {response.status} for {url}. Waiting {delay}s...")
+                    retry_after_delay = _parse_retry_after_seconds(response.headers.get("Retry-After", ""))
+                    exp_delay = base_delay * (2 ** attempt)
+                    jitter = random.uniform(0, base_delay * 0.35)
+                    delay = max(exp_delay, retry_after_delay) + jitter
+                    logger.warning(
+                        "Transient HTTP %s for %s (attempt %s/%s). Waiting %.1fs...",
+                        response.status,
+                        url,
+                        attempt + 1,
+                        max_retries,
+                        delay,
+                    )
                     if attempt < max_retries - 1:
                         await asyncio.sleep(delay)
                 else:
                     logger.warning(f"Failed to fetch {url}. Status: {response.status}")
                     return ""
         except asyncio.TimeoutError:
-            logger.warning(f"Timeout fetching {url}.")
-            delay = base_delay * (2 ** attempt)
+            delay = (base_delay * (2 ** attempt)) + random.uniform(0, base_delay * 0.35)
+            logger.warning("Timeout fetching %s (attempt %s/%s). Waiting %.1fs...", url, attempt + 1, max_retries, delay)
             if attempt < max_retries - 1:
                 await asyncio.sleep(delay)
         except Exception as e:
@@ -33,8 +109,12 @@ async def fetch_with_retries(session: aiohttp.ClientSession, url: str, max_retri
             
     return ""
 
-async def scrape_bandcamp_metadata(url: str, session: aiohttp.ClientSession) -> dict:
-    html = await fetch_with_retries(session, url)
+async def scrape_bandcamp_metadata(
+    url: str,
+    session: aiohttp.ClientSession,
+    rate_limiter: Optional[HostRateLimiter] = None,
+) -> dict:
+    html = await fetch_with_retries(session, url, rate_limiter=rate_limiter)
     if not html:
         return {}
         
