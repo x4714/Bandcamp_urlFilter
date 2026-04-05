@@ -4,8 +4,9 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
-from typing import List
+from typing import Callable, List, Optional
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
@@ -237,6 +238,7 @@ def run_streamrip_batches(
     batch_files: List[str],
     rip_quality: int,
     codec_selection: str,
+    progress_callback: Optional[Callable[[str, str], None]] = None,
 ) -> tuple[int, int, List[str], str]:
     base_cmd = resolve_streamrip_command()
     log_path = os.path.abspath(os.path.join("exports", "streamrip_last.log"))
@@ -250,6 +252,8 @@ def run_streamrip_batches(
         log.write(f"Base command: {' '.join(base_cmd) if base_cmd else 'NOT FOUND'}\n\n")
         log.write(f"Selected quality: {rip_quality} ({format_quality_option(rip_quality)})\n")
         log.write(f"Selected codec: {codec_arg or 'Original'}\n\n")
+    if progress_callback:
+        progress_callback(log_path, _read_log_tail(log_path))
 
     if not base_cmd:
         return 0, 0, [
@@ -298,7 +302,18 @@ def run_streamrip_batches(
                         stdin=subprocess.DEVNULL,
                         text=True,
                     )
-                    result_code = process.wait(timeout=streamrip_timeout_seconds)
+                started_at = time.monotonic()
+                while True:
+                    remaining = streamrip_timeout_seconds - (time.monotonic() - started_at)
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(cmd, streamrip_timeout_seconds)
+                    wait_for = min(0.75, remaining)
+                    try:
+                        result_code = process.wait(timeout=wait_for)
+                        break
+                    except subprocess.TimeoutExpired:
+                        if progress_callback:
+                            progress_callback(log_path, _read_log_tail(log_path))
             except subprocess.TimeoutExpired:
                 if process is not None:
                     process.kill()
@@ -311,11 +326,15 @@ def run_streamrip_batches(
                     f"{fname}: {url} -> timed out after {streamrip_timeout_seconds}s"
                 )
                 file_failed = True
+                if progress_callback:
+                    progress_callback(log_path, _read_log_tail(log_path))
                 continue
 
             with open(log_path, "a", encoding="utf-8") as log:
                 log.write(f"$ {' '.join(cmd)}\n")
                 log.write(f"[exit {result_code}] {datetime.now(timezone.utc).isoformat()}\n\n")
+            if progress_callback:
+                progress_callback(log_path, _read_log_tail(log_path))
             if result_code != 0:
                 with open(log_path, "r", encoding="utf-8") as log_read:
                     log_read.seek(log_offset_before)
@@ -338,8 +357,19 @@ def run_streamrip_batches(
             f"Streamrip run finished: {datetime.now(timezone.utc).isoformat()} "
             f"(batches_ok={success_count}, urls={total_urls}, failures={len(failures)})\n"
         )
+    if progress_callback:
+        progress_callback(log_path, _read_log_tail(log_path))
 
     return success_count, total_urls, failures, log_path
+
+
+def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            text = f.read()
+        return text[-max_chars:]
+    except Exception:
+        return ""
 
 
 def list_export_batch_files() -> List[str]:

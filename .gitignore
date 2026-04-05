@@ -45,3 +45,4 @@ settings.json
 run_rip.bat
 .codex
 exports/streamrip_last.log
+run_rip.sh

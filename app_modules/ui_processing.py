@@ -11,6 +11,15 @@ from app_modules.matching import process_batch
 from app_modules.streamrip import export_qobuz_batches, run_streamrip_batches
 
 
+def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            text = f.read()
+        return text[-max_chars:]
+    except Exception:
+        return ""
+
+
 def handle_process_submission(
     process_btn: bool,
     uploaded_file,
@@ -202,10 +211,21 @@ def render_results_and_exports(
 
                 should_run_rip = bool(rip_this_run_btn or (export_btn and auto_rip_after_export))
                 if should_run_rip:
+                    live_log_caption = st.empty()
+                    live_log_box = st.empty()
+
+                    def _update_live_log(log_path: str, tail_text: str) -> None:
+                        live_log_caption.caption(f"Live rip log: {log_path}")
+                        live_log_box.code(tail_text or "(waiting for streamrip output...)", language="text")
+
                     with st.spinner("Running streamrip for exported batches..."):
                         success_count, total_urls, failures, log_path = run_streamrip_batches(
-                            batch_files, rip_quality, rip_codec
+                            batch_files,
+                            rip_quality,
+                            rip_codec,
+                            progress_callback=_update_live_log,
                         )
+                    _update_live_log(log_path, _read_log_tail(log_path))
                     st.session_state.rip_last_log_path = log_path
                     if failures:
                         st.session_state.rip_last_level = "error"
