@@ -14,6 +14,42 @@ from app_modules.streamrip import (
 )
 
 
+def init_streamrip_form_state(streamrip_settings: dict, default_rip_quality: int, default_codec: str) -> None:
+    use_auth = bool(streamrip_settings.get("use_auth_token", True))
+    email_or_userid = str(streamrip_settings.get("email_or_userid", ""))
+    password_or_token = str(streamrip_settings.get("password_or_token", ""))
+    app_id = str(streamrip_settings.get("app_id", ""))
+    quality = int(streamrip_settings.get("quality", default_rip_quality))
+    codec = str(streamrip_settings.get("codec_selection", default_codec))
+    downloads_folder = str(streamrip_settings.get("downloads_folder", ""))
+
+    if quality not in QUALITY_OPTIONS:
+        quality = default_rip_quality
+    if codec not in CODEC_OPTIONS:
+        codec = default_codec
+
+    signature = (
+        use_auth,
+        email_or_userid,
+        password_or_token,
+        app_id,
+        quality,
+        codec,
+        downloads_folder,
+    )
+    if st.session_state.get("streamrip_form_settings_signature") == signature:
+        return
+
+    st.session_state.streamrip_form_use_auth_token = use_auth
+    st.session_state.streamrip_form_email_or_userid = email_or_userid
+    st.session_state.streamrip_form_password_or_token = password_or_token
+    st.session_state.streamrip_form_app_id = app_id
+    st.session_state.streamrip_form_quality = quality
+    st.session_state.streamrip_form_codec = codec
+    st.session_state.streamrip_form_downloads_folder = downloads_folder
+    st.session_state.streamrip_form_settings_signature = signature
+
+
 def init_streamrip_download_state(default_downloads_folder: str) -> None:
     if "streamrip_downloads_folder_persist" not in st.session_state:
         st.session_state.streamrip_downloads_folder_persist = default_downloads_folder
@@ -35,8 +71,29 @@ def render_streamrip_setup(
     default_codec: str,
     env_qobuz_app_id: str,
     env_qobuz_token: str,
+    expanded_override: bool | None = None,
+    key_prefix: str = "streamrip_setup",
+    include_browser: bool = False,
 ) -> None:
-    with st.expander("🎧 Streamrip Setup", expanded=streamrip_needs_setup):
+    def _k(name: str) -> str:
+        return f"{key_prefix}_{name}"
+
+    def _prime_widget(widget_name: str, shared_key: str) -> None:
+        widget_key = _k(widget_name)
+        shared_value = st.session_state.get(shared_key)
+        if st.session_state.get(widget_key) != shared_value:
+            st.session_state[widget_key] = shared_value
+
+    _prime_widget("use_auth_token", "streamrip_form_use_auth_token")
+    _prime_widget("email_or_userid", "streamrip_form_email_or_userid")
+    _prime_widget("password_or_token", "streamrip_form_password_or_token")
+    _prime_widget("app_id", "streamrip_form_app_id")
+    _prime_widget("downloads_folder_draft", "streamrip_form_downloads_folder")
+    _prime_widget("cfg_quality", "streamrip_form_quality")
+    _prime_widget("cfg_codec", "streamrip_form_codec")
+
+    expanded_value = streamrip_needs_setup if expanded_override is None else bool(expanded_override)
+    with st.expander("🎧 Streamrip Setup", expanded=expanded_value):
         st.caption(f"Config path: `{streamrip_config_path}`")
         if not streamrip_config_ready:
             st.error("Streamrip config is not available yet. Install streamrip and restart the app.")
@@ -46,11 +103,20 @@ def render_streamrip_setup(
                 if st.button(
                     "Auto-Fill Token/App ID from .env",
                     help="Copies QOBUZ_USER_AUTH_TOKEN and optional QOBUZ_APP_ID from .env into Streamrip config fields.",
+                    key=_k("autofill_btn"),
                 ):
-                    current_use_auth = bool(streamrip_settings.get("use_auth_token", True))
-                    current_email = str(streamrip_settings.get("email_or_userid", ""))
-                    current_token = str(streamrip_settings.get("password_or_token", ""))
-                    current_app_id = str(streamrip_settings.get("app_id", ""))
+                    current_use_auth = bool(st.session_state.get("streamrip_form_use_auth_token", True))
+                    current_email = str(st.session_state.get("streamrip_form_email_or_userid", ""))
+                    current_token = str(st.session_state.get("streamrip_form_password_or_token", ""))
+                    current_app_id = str(st.session_state.get("streamrip_form_app_id", ""))
+                    current_quality = int(st.session_state.get("streamrip_form_quality", default_rip_quality))
+                    current_codec = str(st.session_state.get("streamrip_form_codec", default_codec))
+                    current_downloads = str(
+                        st.session_state.get(
+                            "streamrip_form_downloads_folder",
+                            st.session_state.streamrip_downloads_folder_draft,
+                        )
+                    )
 
                     updated_token = env_qobuz_token or current_token
                     updated_app_id = env_qobuz_app_id or current_app_id
@@ -60,9 +126,9 @@ def render_streamrip_setup(
                         email_or_userid=current_email,
                         password_or_token=updated_token,
                         app_id=updated_app_id,
-                        quality=default_rip_quality,
-                        codec_selection=default_codec,
-                        downloads_folder=st.session_state.streamrip_downloads_folder_draft,
+                        quality=current_quality,
+                        codec_selection=current_codec,
+                        downloads_folder=current_downloads,
                     )
                     if ok:
                         st.success(msg)
@@ -73,10 +139,19 @@ def render_streamrip_setup(
                 if st.button(
                     "Fetch User ID / Email",
                     help="Calls Qobuz login API with your token/app ID and writes the detected account identifier into config.",
+                    key=_k("fetch_user_btn"),
                 ):
-                    current_email = str(streamrip_settings.get("email_or_userid", ""))
-                    current_token = str(streamrip_settings.get("password_or_token", ""))
-                    current_app_id = str(streamrip_settings.get("app_id", ""))
+                    current_email = str(st.session_state.get("streamrip_form_email_or_userid", ""))
+                    current_token = str(st.session_state.get("streamrip_form_password_or_token", ""))
+                    current_app_id = str(st.session_state.get("streamrip_form_app_id", ""))
+                    current_quality = int(st.session_state.get("streamrip_form_quality", default_rip_quality))
+                    current_codec = str(st.session_state.get("streamrip_form_codec", default_codec))
+                    current_downloads = str(
+                        st.session_state.get(
+                            "streamrip_form_downloads_folder",
+                            st.session_state.streamrip_downloads_folder_draft,
+                        )
+                    )
 
                     token_for_lookup = current_token or env_qobuz_token
                     app_id_for_lookup = current_app_id or env_qobuz_app_id
@@ -92,9 +167,9 @@ def render_streamrip_setup(
                             email_or_userid=str(lookup_data.get("identifier", current_email)),
                             password_or_token=token_for_lookup,
                             app_id=app_id_for_lookup,
-                            quality=default_rip_quality,
-                            codec_selection=default_codec,
-                            downloads_folder=st.session_state.streamrip_downloads_folder_draft,
+                            quality=current_quality,
+                            codec_selection=current_codec,
+                            downloads_folder=current_downloads,
                         )
                         if save_ok:
                             st.success(
@@ -108,59 +183,67 @@ def render_streamrip_setup(
                 if st.button(
                     "Reload Streamrip Config",
                     help="Reloads Streamrip settings from config.toml and refreshes this setup panel.",
+                    key=_k("reload_btn"),
                 ):
                     st.rerun()
 
-            _render_download_folder_browser()
+            if include_browser:
+                _render_download_folder_browser()
 
-            with st.form("streamrip_setup_form"):
+            with st.form(_k("form")):
                 st.write("Qobuz Credentials")
                 use_auth_token_cfg = st.checkbox(
                     "Use auth token mode",
-                    value=bool(streamrip_settings.get("use_auth_token", True)),
+                    key=_k("use_auth_token"),
                 )
                 cred_col1, cred_col2 = st.columns(2)
                 with cred_col1:
                     email_or_userid_cfg = st.text_input(
                         "Qobuz Email or User ID",
-                        value=str(streamrip_settings.get("email_or_userid", "")),
+                        key=_k("email_or_userid"),
                     )
                 with cred_col2:
                     password_or_token_cfg = st.text_input(
                         "Qobuz Password Hash or Auth Token",
-                        value=str(streamrip_settings.get("password_or_token", "")),
                         type="password",
+                        key=_k("password_or_token"),
                     )
 
                 cred_row2_col1, cred_row2_col2 = st.columns(2)
                 with cred_row2_col1:
                     app_id_cfg = st.text_input(
                         "Qobuz App ID",
-                        value=str(streamrip_settings.get("app_id", "")),
+                        key=_k("app_id"),
                     )
                 with cred_row2_col2:
                     downloads_folder_cfg = st.text_input(
                         "Downloads Folder Path",
-                        key="streamrip_downloads_folder_draft",
+                        key=_k("downloads_folder_draft"),
                         help="Leave as-is if you do not want to change your current streamrip downloads folder.",
                     )
 
                 st.write("Streamrip Defaults")
                 defaults_col1, defaults_col2 = st.columns(2)
                 with defaults_col1:
+                    quality_value = int(st.session_state.get("streamrip_form_quality", default_rip_quality))
+                    if quality_value not in QUALITY_OPTIONS:
+                        quality_value = default_rip_quality
                     cfg_quality = st.selectbox(
                         "Default Quality in streamrip config",
                         options=QUALITY_OPTIONS,
-                        index=QUALITY_OPTIONS.index(default_rip_quality),
+                        index=QUALITY_OPTIONS.index(quality_value),
                         format_func=format_quality_option,
-                        key="streamrip_cfg_quality",
+                        key=_k("cfg_quality"),
                     )
                 with defaults_col2:
+                    codec_value = str(st.session_state.get("streamrip_form_codec", default_codec))
+                    if codec_value not in CODEC_OPTIONS:
+                        codec_value = default_codec
                     cfg_codec = st.selectbox(
                         "Default Codec in streamrip config",
                         options=CODEC_OPTIONS,
-                        index=CODEC_OPTIONS.index(default_codec),
-                        key="streamrip_cfg_codec",
+                        index=CODEC_OPTIONS.index(codec_value),
+                        key=_k("cfg_codec"),
                     )
                 save_streamrip_btn = st.form_submit_button(
                     "Save Streamrip Config",
@@ -181,14 +264,25 @@ def render_streamrip_setup(
                 )
                 if ok:
                     st.session_state.streamrip_downloads_folder_persist = str(downloads_folder_cfg)
+                    st.session_state.streamrip_downloads_folder_draft = str(downloads_folder_cfg)
+                    st.session_state.streamrip_form_use_auth_token = bool(use_auth_token_cfg)
+                    st.session_state.streamrip_form_email_or_userid = str(email_or_userid_cfg)
+                    st.session_state.streamrip_form_password_or_token = str(password_or_token_cfg)
+                    st.session_state.streamrip_form_app_id = str(app_id_cfg)
+                    st.session_state.streamrip_form_downloads_folder = str(downloads_folder_cfg)
+                    st.session_state.streamrip_form_quality = int(cfg_quality)
+                    st.session_state.streamrip_form_codec = str(cfg_codec)
                     st.success(msg)
                     st.rerun()
                 else:
                     st.error(msg)
 
             with st.expander("Raw streamrip config", expanded=False):
-                show_config_secrets = st.checkbox("Show secrets", value=False)
-                st.code(read_streamrip_config_text(streamrip_config_path, show_config_secrets), language="toml")
+                show_config_secrets = st.checkbox("Show secrets", value=False, key=_k("show_secrets"))
+                if st.button("Load Raw Config", key=_k("load_raw_config")):
+                    st.session_state[_k("show_raw_config_body")] = True
+                if st.session_state.get(_k("show_raw_config_body"), False):
+                    st.code(read_streamrip_config_text(streamrip_config_path, show_config_secrets), language="toml")
 
         if streamrip_needs_setup:
             st.warning(

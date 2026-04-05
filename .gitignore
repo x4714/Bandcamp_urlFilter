@@ -43,6 +43,6 @@ settings.json
 *.txt
 !requirements.txt
 run_rip.bat
-.codex
-exports/streamrip_last.log
 run_rip.sh
+.codex
+exports/*.log

@@ -17,6 +17,10 @@ This tool helps you:
 - **Qobuz Matching**: Searches Qobuz for exact matches based on Bandcamp metadata.
 - **Fuzzy Matching**: Uses `rapidfuzz` for robust artist and album title matching.
 - **Export Qobuz Links**: Download a `.txt` file containing all matched Qobuz URLs.
+- **Direct Qobuz Rip Tab**: Paste or upload Qobuz links and rip them immediately with streamrip.
+- **Smoked Salmon Upload Tab**: Run `smoked-salmon` uploads for your downloaded release folders from inside the UI.
+- **Smoked Salmon Config Editor**: Edit and save smoked-salmon `config.toml` and run `health/checkconf/migrate` directly from the UI.
+- **Smoked Salmon Setup Assistant**: Checks required tools (`flac`, `sox`, `lame`, `mp3val`, `curl`, `git`) and auto-installs smoked-salmon with `uv` if missing.
 - **Dry Run Mode**: Apply Bandcamp filters without performing Qobuz searches, useful for quick filtering.
 - **Cross-platform Open Actions**: The `.env` helper button and exports folder button work on Windows, macOS, and Linux.
 ## 🛠️ Installation
@@ -92,3 +96,7 @@ Then run `./run.command` again (or double-click it in Finder).
 - After processing, use the export feature to write Qobuz links to `/exports/`.
 - The app generates both `run_rip.bat` and `run_rip.sh` so Windows, Linux, and macOS users can run the downloader script.
 - `streamrip` is included in `requirements.txt`; if not installed yet, run `pip install -r requirements.txt`.
+- For tracker uploads, install `smoked-salmon`:
+  ```bash
+  uv tool install git+https://github.com/smokin-salmon/smoked-salmon
+  ```

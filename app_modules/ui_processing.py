@@ -149,6 +149,7 @@ def render_results_and_exports(
     rip_quality: int,
     rip_codec: str,
     auto_rip_after_export: bool,
+    streamrip_needs_setup: bool = False,
 ) -> None:
     if dry_run or not st.session_state.results:
         return
@@ -173,13 +174,17 @@ def render_results_and_exports(
         width="stretch",
     )
 
-    qobuz_strings = get_download_link([{"qobuz_url": r["Qobuz Link"]} for r in st.session_state.results])
-    st.download_button(
-        label="Download Qobuz Links (.txt)",
-        data=qobuz_strings,
-        file_name="qobuz_exports.txt",
-        mime="text/plain",
-    )
+    matched_qobuz_urls = [r["Qobuz Link"] for r in st.session_state.results if r.get("Qobuz Link")]
+    qobuz_strings = get_download_link([{"qobuz_url": url} for url in matched_qobuz_urls])
+    if matched_qobuz_urls:
+        st.download_button(
+            label=f"Download Qobuz Links (.txt) - {len(matched_qobuz_urls)} match(es)",
+            data=qobuz_strings + "\n",
+            file_name="qobuz_exports.txt",
+            mime="text/plain",
+        )
+    else:
+        st.info("No matched Qobuz links yet to download as a `.txt` file.")
 
     st.markdown("---")
     st.subheader("💾 Local Export & Batch Generator")
@@ -211,6 +216,14 @@ def render_results_and_exports(
 
                 should_run_rip = bool(rip_this_run_btn or (export_btn and auto_rip_after_export))
                 if should_run_rip:
+                    if streamrip_needs_setup:
+                        st.session_state.streamrip_setup_matcher_expand_once = True
+                        st.session_state.streamrip_setup_matcher_scroll_once = True
+                        st.session_state.streamrip_setup_attention_message = (
+                            "Complete Streamrip setup before ripping this run."
+                        )
+                        st.rerun()
+
                     live_log_caption = st.empty()
                     live_log_box = st.empty()
 

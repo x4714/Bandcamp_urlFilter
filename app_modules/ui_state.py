@@ -13,6 +13,12 @@ SESSION_DEFAULTS = {
     "rip_last_level": "",
     "rip_last_message": "",
     "rip_last_log_path": "",
+    "direct_rip_last_level": "",
+    "direct_rip_last_message": "",
+    "direct_rip_last_log_path": "",
+    "salmon_last_level": "",
+    "salmon_last_message": "",
+    "salmon_last_log_path": "",
 }
 
 
