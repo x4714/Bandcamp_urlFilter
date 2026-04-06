@@ -224,26 +224,24 @@ def render_streamrip_setup(
 
                 st.write("Streamrip Defaults")
                 defaults_col1, defaults_col2 = st.columns(2)
+                quality_widget_key = _k("cfg_quality")
+                if st.session_state.get(quality_widget_key) not in QUALITY_OPTIONS:
+                    st.session_state[quality_widget_key] = default_rip_quality
                 with defaults_col1:
-                    quality_value = int(st.session_state.get("streamrip_form_quality", default_rip_quality))
-                    if quality_value not in QUALITY_OPTIONS:
-                        quality_value = default_rip_quality
                     cfg_quality = st.selectbox(
                         "Default Quality in streamrip config",
                         options=QUALITY_OPTIONS,
-                        index=QUALITY_OPTIONS.index(quality_value),
                         format_func=format_quality_option,
-                        key=_k("cfg_quality"),
+                        key=quality_widget_key,
                     )
+                codec_widget_key = _k("cfg_codec")
+                if st.session_state.get(codec_widget_key) not in CODEC_OPTIONS:
+                    st.session_state[codec_widget_key] = default_codec
                 with defaults_col2:
-                    codec_value = str(st.session_state.get("streamrip_form_codec", default_codec))
-                    if codec_value not in CODEC_OPTIONS:
-                        codec_value = default_codec
                     cfg_codec = st.selectbox(
                         "Default Codec in streamrip config",
                         options=CODEC_OPTIONS,
-                        index=CODEC_OPTIONS.index(codec_value),
-                        key=_k("cfg_codec"),
+                        key=codec_widget_key,
                     )
                 save_streamrip_btn = st.form_submit_button(
                     "Save Streamrip Config",
