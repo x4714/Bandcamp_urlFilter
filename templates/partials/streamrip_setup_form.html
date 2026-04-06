@@ -1,0 +1,56 @@
+{% set setup_disabled = state.settings.get('wip_direct_rip') if active_tab == 'Direct Qobuz Rip' else state.settings.get('wip_matcher') %}
+<details class="panel content-panel streamrip-setup-panel" {% if streamrip_needs_setup %}open{% endif %}>
+  <summary><span class="panel-caret"></span><span>🎧 Streamrip Setup</span></summary>
+  <div class="panel-body">
+    {% if streamrip_needs_setup %}
+    <div class="msg warning">Complete streamrip setup (credentials + download paths) before ripping.</div>
+    {% else %}
+    <div class="msg success">Streamrip setup is ready.</div>
+    {% endif %}
+    {% include 'partials/app_id_fetch_status.html' %}
+
+    <form
+      id="streamrip-form"
+      class="stack streamrip-setup-form"
+      hx-post="/actions/save-streamrip"
+      hx-target="#tab-content"
+      hx-swap="innerHTML"
+    >
+      <div class="streamrip-grid">
+        <div class="field">
+          <label>Qobuz Email or User ID</label>
+          <input type="text" name="email_or_userid" value="{{ streamrip_settings.get('email_or_userid','') }}" {% if setup_disabled %}disabled{% endif %} />
+        </div>
+        <div class="field">
+          <label>Qobuz App ID</label>
+          <input type="text" name="app_id" value="{{ streamrip_settings.get('app_id') or env_qobuz_app_id }}" {% if setup_disabled %}disabled{% endif %} />
+        </div>
+        <div class="field field-full">
+          <label>Qobuz Password Hash or Auth Token</label>
+          <input type="password" name="password_or_token" value="{{ streamrip_settings.get('password_or_token','') }}" {% if setup_disabled %}disabled{% endif %} />
+        </div>
+        <div class="field">
+          <label>Downloads Folder Path</label>
+          <input type="text" name="downloads_folder" value="{{ streamrip_settings.get('downloads_folder','') }}" {% if setup_disabled %}disabled{% endif %} />
+        </div>
+        <div class="field">
+          <label>Downloads DB Path</label>
+          <input type="text" name="downloads_db_path" value="{{ streamrip_settings.get('downloads_db_path','') }}" {% if setup_disabled %}disabled{% endif %} />
+        </div>
+        <div class="field field-full">
+          <label>Failed Downloads Folder Path</label>
+          <input type="text" name="failed_downloads_path" value="{{ streamrip_settings.get('failed_downloads_path','') }}" {% if setup_disabled %}disabled{% endif %} />
+        </div>
+      </div>
+
+      <label class="row-check">
+        <input type="checkbox" name="use_auth_token" value="true" {% if streamrip_settings.get('use_auth_token', True) %}checked{% endif %} {% if setup_disabled %}disabled{% endif %} />
+        Use auth token mode
+      </label>
+
+      <input type="hidden" name="quality" value="{{ state.settings.get('rip_quality', default_rip_quality) }}" />
+      <input type="hidden" name="codec_selection" value="{{ state.settings.get('rip_codec', default_codec) }}" />
+      <button class="btn" type="submit" {% if setup_disabled %}disabled{% endif %}>Save Streamrip Setup</button>
+    </form>
+  </div>
+</details>

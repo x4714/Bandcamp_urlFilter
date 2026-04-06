@@ -1,0 +1,207 @@
+{% if state.messages %}
+<section class="messages">
+  {% for m in state.messages %}
+  <div class="msg {{ m.level }}">{{ m.text }}</div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% if active_tab == 'Bandcamp Matcher' %}
+{% if state.settings.get('wip_matcher') %}
+<div class="wip">WIP 🚧</div>
+{% endif %}
+
+<section class="card slim compact-status">
+  {% if streamrip_needs_setup %}
+  <div>⚠ Streamrip setup incomplete.</div>
+  {% else %}
+  <div>✓ Streamrip setup ready.</div>
+  {% endif %}
+</section>
+
+{% include 'partials/streamrip_setup_form.html' %}
+
+<section class="card">
+  <form id="matcher-form" class="stack" hx-post="/actions/process-matcher" hx-target="#tab-content" hx-swap="innerHTML" enctype="multipart/form-data">
+    <label>Upload .txt or .log file with Bandcamp URLs</label>
+    <div class="upload-row">
+      <label class="upload-btn">
+        <input type="file" name="upload" accept=".txt,.log" required {% if state.settings.get('wip_matcher') %}disabled{% endif %} />
+        <span class="upload-icon">upload</span>
+        <span>Upload</span>
+      </label>
+      <div class="caption">200MB per file • TXT, LOG</div>
+    </div>
+    <input type="hidden" name="max_links" value="{{ state.settings.get('max_links', 10) }}" />
+    <label class="switch-row">
+      <input type="checkbox" name="auto_rip_after_export" value="true" {% if state.settings.get('auto_rip_after_export') %}checked{% endif %} {% if state.settings.get('wip_matcher') %}disabled{% endif %} />
+      <span class="switch-slider"></span>
+      <span>Auto rip after export <span class="help" title="After export, automatically run ripping for generated Qobuz links.">?</span></span>
+    </label>
+    <div class="row action-row">
+      <button class="btn primary" type="submit" {% if state.settings.get('wip_matcher') %}disabled{% endif %}>Process</button>
+      <button class="btn" type="button" disabled>Stop / Cancel</button>
+    </div>
+  </form>
+</section>
+
+{% if state.matcher_status %}
+<section class="card slim">
+  <div class="caption">{{ state.matcher_status }}</div>
+</section>
+{% endif %}
+
+{% if state.matcher_filtered %}
+<section class="card">
+  <h3>Filtered Entries ({{ state.matcher_filtered|length }})</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Artist</th><th>Album</th><th>Genre</th><th>Tracks</th><th>Duration</th><th>Bandcamp</th></tr>
+      </thead>
+      <tbody>
+        {% for row in state.matcher_filtered %}
+        <tr>
+          <td>{{ row.artist }}</td>
+          <td>{{ row.title }}</td>
+          <td>{{ row.genre }}</td>
+          <td>{{ row.tracks }}</td>
+          <td>{{ row.duration }}</td>
+          <td><a href="{{ row.url }}" target="_blank">Open</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{% if state.matcher_results %}
+<section class="card">
+  <h3>Results</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Artist</th><th>Album</th><th>Bandcamp</th><th>Qobuz</th><th>Status</th></tr>
+      </thead>
+      <tbody>
+      {% for row in state.matcher_results %}
+        <tr>
+          <td>{{ row['Artist'] }}</td>
+          <td>{{ row['Album'] }}</td>
+          <td><a href="{{ row['Bandcamp Link'] }}" target="_blank">Bandcamp</a></td>
+          <td>{% if row['Qobuz Link'] %}<a href="{{ row['Qobuz Link'] }}" target="_blank">Qobuz</a>{% endif %}</td>
+          <td>{{ row['Status'] }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h3>Local Export & Batch Generator</h3>
+  <form id="matcher-export-form" class="stack" hx-post="/actions/export-matcher" hx-target="#tab-content" hx-swap="innerHTML">
+    <label>Max links per file</label>
+    <input type="number" name="max_links" min="1" value="{{ state.settings.get('max_links', 10) }}" {% if state.settings.get('wip_matcher') %}disabled{% endif %} />
+    <label class="row-check">
+      <input type="checkbox" name="auto_rip_after_export" value="true" {% if state.settings.get('auto_rip_after_export') %}checked{% endif %} {% if state.settings.get('wip_matcher') %}disabled{% endif %} />
+      Auto rip after export
+    </label>
+    <div class="row">
+      <button class="btn primary" type="submit" {% if state.settings.get('wip_matcher') %}disabled{% endif %}>Export to Local Disk</button>
+      <button class="btn" type="submit" name="run_rip_now" value="true" {% if state.settings.get('wip_matcher') %}disabled{% endif %}>Rip This Run's Qobuz Results</button>
+    </div>
+  </form>
+</section>
+{% endif %}
+
+{% if state.matcher_last_export %}
+<section class="card slim">
+  <div class="caption">{{ state.matcher_last_export }}</div>
+</section>
+{% endif %}
+
+{% if state.matcher_rip_log_tail %}
+<section class="card">
+  <h3>Last Rip Log (tail)</h3>
+  <pre class="log-box">{{ state.matcher_rip_log_tail }}</pre>
+</section>
+{% endif %}
+
+{% elif active_tab == 'Direct Qobuz Rip' %}
+{% if state.settings.get('wip_direct_rip') %}
+<div class="wip">WIP 🚧</div>
+{% endif %}
+
+{% include 'partials/streamrip_setup_form.html' %}
+
+<section class="card">
+  <h2>🔗 Direct Qobuz Rip</h2>
+  <p class="caption">Paste Qobuz links or upload a .txt/.log file, then rip directly with streamrip.</p>
+  <form id="direct-rip-form" class="stack" hx-post="/actions/direct-rip" hx-target="#tab-content" hx-swap="innerHTML" enctype="multipart/form-data">
+    <label>Paste Qobuz Links</label>
+    <textarea name="pasted_urls" rows="7" placeholder="https://www.qobuz.com/...&#10;https://play.qobuz.com/..." {% if state.settings.get('wip_direct_rip') %}disabled{% endif %}></textarea>
+
+    <label>Or upload a Qobuz links file</label>
+    <div class="upload-row">
+      <label class="upload-btn">
+        <input type="file" name="uploaded_links" accept=".txt,.log" {% if state.settings.get('wip_direct_rip') %}disabled{% endif %} />
+        <span class="upload-icon">upload</span>
+        <span>Upload</span>
+      </label>
+      <div class="caption">200MB per file • TXT, LOG</div>
+    </div>
+    <button class="btn primary" type="submit" {% if state.settings.get('wip_direct_rip') %}disabled{% endif %}>Rip Parsed Qobuz Links</button>
+  </form>
+</section>
+
+{% if state.direct_urls %}
+<section class="card slim">
+  <div class="caption">Detected {{ state.direct_urls|length }} unique Qobuz URL(s).</div>
+</section>
+{% endif %}
+
+{% if state.direct_log_tail %}
+<section class="card">
+  <h3>Direct Rip Log (tail)</h3>
+  <pre class="log-box">{{ state.direct_log_tail }}</pre>
+</section>
+{% endif %}
+
+{% else %}
+{% if state.settings.get('wip_smoked_salmon') %}
+<div class="wip">WIP 🚧</div>
+{% endif %}
+
+<section class="card">
+  <h2>🐟 Smoked Salmon Upload</h2>
+  <p class="caption">Upload already-downloaded folders with smoked-salmon (GitHub: https://github.com/smokin-salmon/smoked-salmon).</p>
+</section>
+
+<details class="panel content-panel" open>
+  <summary><span class="panel-caret"></span><span>🧪 Setup Assistant</span></summary>
+  <div class="panel-body">
+    <p class="caption">Checks required CLI tools and smoked-salmon availability.</p>
+    <p class="caption">Detected config path: <code>{{ smoked_status.get('config_path', smoked_config_path) }}</code></p>
+
+    {% if smoked_status.get('ready') %}
+    <div class="msg success">Setup looks ready: required tools + smoked-salmon are detected.</div>
+    {% else %}
+    <div class="msg warning">Setup is incomplete.</div>
+    {% if smoked_status.get('missing_required_tools') %}
+    <div class="msg error">Missing required tools: {{ smoked_status.get('missing_required_tools') | join(', ') }}</div>
+    {% endif %}
+    {% if not smoked_status.get('has_salmon') %}
+    <div class="msg error">`salmon` command is not detected.</div>
+    {% endif %}
+    {% endif %}
+
+    {% if smoked_status.get('has_uv') %}
+    <div class="caption">Detected uv executable: <code>{{ smoked_status.get('uv_command', '') }}</code></div>
+    {% else %}
+    <div class="caption">`uv` is not detected.</div>
+    {% endif %}
+  </div>
+</details>
+{% endif %}

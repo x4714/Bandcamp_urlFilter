@@ -1,0 +1,23 @@
+{% set fetch_state = app_id_fetch.get('state', 'idle') %}
+{% set terminal = fetch_state in ['success', 'error', 'env'] %}
+<div
+  id="app-id-fetch-status"
+  class="app-id-fetch-status"
+  {% if not terminal %}
+  hx-get="/partials/app-id-fetch-status"
+  hx-trigger="load, every 1s"
+  hx-swap="outerHTML"
+  {% endif %}
+>
+  {% if fetch_state == 'env' %}
+  <div class="msg success">Qobuz App ID source: `.env` ({{ app_id_fetch.get('app_id', '') }}).</div>
+  {% elif fetch_state == 'running' %}
+  <div class="msg info">Auto-fetching Qobuz App ID: {{ app_id_fetch.get('message', 'Starting...') }}</div>
+  {% elif fetch_state == 'success' %}
+  <div class="msg success">{{ app_id_fetch.get('message', 'Qobuz App ID discovered.') }}</div>
+  {% elif fetch_state == 'error' %}
+  <div class="msg warning">{{ app_id_fetch.get('message', 'Could not discover Qobuz App ID.') }}</div>
+  {% else %}
+  <div class="msg info">Qobuz App ID fetch status: idle.</div>
+  {% endif %}
+</div>

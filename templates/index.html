@@ -1,0 +1,544 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bandcamp to Qobuz Matcher</title>
+  <link rel="stylesheet" href="/static/app.css" />
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar-panel">
+      {% include 'partials/sidebar.html' %}
+    </aside>
+    <main class="main">
+      <section class="hero">
+        <h1><span class="icon">🎵</span> Bandcamp to Qobuz Matcher</h1>
+        <p>Filter your Bandcamp URLs and find exact high-resolution matches on Qobuz.</p>
+      </section>
+
+      <section class="tabs">
+        {% for tab in tabs %}
+        <button
+          class="tab-btn {% if active_tab == tab %}active{% endif %}"
+          data-tab-name="{{ tab }}"
+          data-tab-btn="true"
+          hx-get="/tabs/{{ tab }}"
+          hx-target="#tab-content"
+          hx-swap="innerHTML"
+          hx-indicator="#loading-indicator"
+        >{{ tab }}</button>
+        {% endfor %}
+      </section>
+
+      <div id="loading-indicator" class="loading">Working...</div>
+      <section id="tab-content" class="tab-content">
+        {% include 'partials/tab_content.html' %}
+      </section>
+    </main>
+  </div>
+  <script>
+    (function () {
+      // Keep tab switching server-driven via HTMX to avoid client-side cache desync.
+      const modularTabs = new Set();
+      const tabContent = document.getElementById("tab-content");
+      const sidebarPanel = document.getElementById("sidebar-panel");
+      const loading = document.getElementById("loading-indicator");
+      const tabButtons = Array.from(document.querySelectorAll("[data-tab-btn='true']"));
+      const weekdayLabels = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"];
+      const monthFormatter = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" });
+      const displayFormatter = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" });
+
+      const tabCache = new Map();
+      const dismissedMessageStorageKey = "dismissedMessages";
+      let dismissedMessageIds = new Set();
+      let activeTab = (document.querySelector("[data-tab-btn='true'].active") || {}).dataset?.tabName || "";
+
+      try {
+        const rawDismissed = window.sessionStorage.getItem(dismissedMessageStorageKey);
+        if (rawDismissed) {
+          const parsed = JSON.parse(rawDismissed);
+          if (Array.isArray(parsed)) {
+            dismissedMessageIds = new Set(parsed.map(String));
+          }
+        }
+      } catch (_) {
+        dismissedMessageIds = new Set();
+      }
+
+      function persistDismissedMessages() {
+        try {
+          window.sessionStorage.setItem(
+            dismissedMessageStorageKey,
+            JSON.stringify(Array.from(dismissedMessageIds)),
+          );
+        } catch (_) {}
+      }
+
+      function getMessageId(message) {
+        if (!message) return "";
+        const levelClasses = ["info", "error", "warning", "success"];
+        const level = levelClasses.find((cls) => message.classList.contains(cls)) || "";
+        const content = (message.textContent || "").replace(/\s+/g, " ").trim();
+        if (!content) return "";
+        return level + "|" + content;
+      }
+
+      function parseIsoDate(value) {
+        if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+        const [year, month, day] = value.split("-").map(Number);
+        const parsed = new Date(year, month - 1, day);
+        if (
+          parsed.getFullYear() !== year ||
+          parsed.getMonth() !== month - 1 ||
+          parsed.getDate() !== day
+        ) {
+          return null;
+        }
+        return parsed;
+      }
+
+      function formatIsoDate(dateObj) {
+        const y = dateObj.getFullYear();
+        const m = String(dateObj.getMonth() + 1).padStart(2, "0");
+        const d = String(dateObj.getDate()).padStart(2, "0");
+        return y + "-" + m + "-" + d;
+      }
+
+      function closeAllDatePickers(exceptPopover) {
+        document.querySelectorAll(".date-picker-popover").forEach((popover) => {
+          if (exceptPopover && popover === exceptPopover) return;
+          popover.hidden = true;
+        });
+      }
+
+      function initializeDatePickers(root) {
+        if (!root) return;
+        const pickers = root.querySelectorAll("[data-date-picker]");
+        pickers.forEach((picker) => {
+          if (picker.dataset.initialized === "true") return;
+
+          const hiddenInput = picker.querySelector(".date-picker-input");
+          const trigger = picker.querySelector(".date-picker-trigger");
+          const triggerText = picker.querySelector(".date-picker-trigger-text");
+          const popover = picker.querySelector(".date-picker-popover");
+          const header = picker.querySelector(".date-picker-month-year");
+          const weekdays = picker.querySelector(".date-picker-weekdays");
+          const grid = picker.querySelector(".date-picker-grid");
+          if (!hiddenInput || !trigger || !triggerText || !popover || !header || !weekdays || !grid) return;
+
+          weekdays.innerHTML = "";
+          weekdayLabels.forEach((label) => {
+            const cell = document.createElement("span");
+            cell.textContent = label;
+            weekdays.appendChild(cell);
+          });
+
+          const initialSelected = parseIsoDate(hiddenInput.value);
+          const initialView = initialSelected || new Date();
+          const state = {
+            selected: initialSelected,
+            viewMonth: initialView.getMonth(),
+            viewYear: initialView.getFullYear(),
+          };
+
+          function syncTriggerText() {
+            if (state.selected) {
+              triggerText.textContent = displayFormatter.format(state.selected);
+            } else {
+              triggerText.textContent = "Select date";
+            }
+          }
+
+          function selectDate(nextDate) {
+            state.selected = nextDate;
+            hiddenInput.value = formatIsoDate(nextDate);
+            state.viewMonth = nextDate.getMonth();
+            state.viewYear = nextDate.getFullYear();
+            syncTriggerText();
+            render();
+          }
+
+          function render() {
+            const firstDay = new Date(state.viewYear, state.viewMonth, 1);
+            const firstWeekday = firstDay.getDay();
+            const daysInMonth = new Date(state.viewYear, state.viewMonth + 1, 0).getDate();
+            const prevDaysInMonth = new Date(state.viewYear, state.viewMonth, 0).getDate();
+            const today = new Date();
+            const todayIso = formatIsoDate(today);
+
+            header.textContent = monthFormatter.format(firstDay);
+            grid.innerHTML = "";
+
+            for (let i = 0; i < 42; i += 1) {
+              const btn = document.createElement("button");
+              btn.type = "button";
+              btn.className = "date-picker-day";
+
+              let dayNumber;
+              let cellDate;
+              if (i < firstWeekday) {
+                dayNumber = prevDaysInMonth - firstWeekday + i + 1;
+                cellDate = new Date(state.viewYear, state.viewMonth - 1, dayNumber);
+                btn.classList.add("is-outside");
+              } else if (i >= firstWeekday + daysInMonth) {
+                dayNumber = i - (firstWeekday + daysInMonth) + 1;
+                cellDate = new Date(state.viewYear, state.viewMonth + 1, dayNumber);
+                btn.classList.add("is-outside");
+              } else {
+                dayNumber = i - firstWeekday + 1;
+                cellDate = new Date(state.viewYear, state.viewMonth, dayNumber);
+              }
+
+              const cellIso = formatIsoDate(cellDate);
+              btn.textContent = String(dayNumber);
+              btn.setAttribute("aria-label", displayFormatter.format(cellDate));
+
+              if (state.selected && cellIso === formatIsoDate(state.selected)) {
+                btn.classList.add("is-selected");
+              }
+              if (cellIso === todayIso) {
+                btn.classList.add("is-today");
+              }
+
+              btn.addEventListener("click", () => {
+                selectDate(cellDate);
+                popover.hidden = true;
+              });
+              grid.appendChild(btn);
+            }
+          }
+
+          function positionPopover() {
+            if (popover.hidden) return;
+            const triggerRect = trigger.getBoundingClientRect();
+            const spacing = 8;
+            const minMargin = 12;
+            const viewportWidth = window.innerWidth;
+            const viewportHeight = window.innerHeight;
+            const popoverWidth = Math.min(312, Math.max(220, viewportWidth - minMargin * 2));
+
+            popover.style.width = popoverWidth + "px";
+
+            let left = triggerRect.left;
+            if (left + popoverWidth > viewportWidth - minMargin) {
+              left = viewportWidth - popoverWidth - minMargin;
+            }
+            if (left < minMargin) {
+              left = minMargin;
+            }
+
+            const estimatedHeight = popover.offsetHeight || 320;
+            let top = triggerRect.bottom + spacing;
+            if (top + estimatedHeight > viewportHeight - minMargin) {
+              const aboveTop = triggerRect.top - estimatedHeight - spacing;
+              if (aboveTop >= minMargin) {
+                top = aboveTop;
+              } else {
+                top = Math.max(minMargin, viewportHeight - estimatedHeight - minMargin);
+              }
+            }
+
+            popover.style.left = left + "px";
+            popover.style.top = top + "px";
+          }
+
+          picker.querySelectorAll(".date-picker-nav").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              const direction = Number(btn.dataset.nav || 0);
+              const next = new Date(state.viewYear, state.viewMonth + direction, 1);
+              state.viewMonth = next.getMonth();
+              state.viewYear = next.getFullYear();
+              render();
+            });
+          });
+
+          picker.querySelectorAll("[data-action='clear']").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              state.selected = null;
+              hiddenInput.value = "";
+              syncTriggerText();
+              render();
+              popover.hidden = true;
+            });
+          });
+
+          picker.querySelectorAll("[data-action='today']").forEach((btn) => {
+            btn.addEventListener("click", () => {
+              selectDate(new Date());
+              popover.hidden = true;
+            });
+          });
+
+          trigger.addEventListener("click", () => {
+            const willOpen = popover.hidden;
+            closeAllDatePickers(willOpen ? popover : null);
+            popover.hidden = !willOpen;
+            if (willOpen) {
+              positionPopover();
+            }
+          });
+
+          window.addEventListener("resize", positionPopover);
+          window.addEventListener("scroll", positionPopover, true);
+
+          picker.dataset.initialized = "true";
+          syncTriggerText();
+          render();
+        });
+      }
+
+      function enhanceNumberInputs(root) {
+        if (!root) return;
+        const inputs = root.querySelectorAll("input[type='number']:not([data-enhanced-stepper='true'])");
+        inputs.forEach((input) => {
+          if (input.closest(".number-stepper")) {
+            input.dataset.enhancedStepper = "true";
+            return;
+          }
+
+          const wrapper = document.createElement("div");
+          wrapper.className = "number-stepper";
+
+          const controls = document.createElement("div");
+          controls.className = "number-stepper-controls";
+
+          const downBtn = document.createElement("button");
+          downBtn.type = "button";
+          downBtn.className = "number-stepper-btn";
+          downBtn.textContent = "-";
+          downBtn.setAttribute("aria-label", "Decrease value");
+
+          const upBtn = document.createElement("button");
+          upBtn.type = "button";
+          upBtn.className = "number-stepper-btn";
+          upBtn.textContent = "+";
+          upBtn.setAttribute("aria-label", "Increase value");
+
+          const originalParent = input.parentNode;
+          if (!originalParent) return;
+          originalParent.insertBefore(wrapper, input);
+          wrapper.appendChild(input);
+          controls.appendChild(downBtn);
+          controls.appendChild(upBtn);
+          wrapper.appendChild(controls);
+
+          input.dataset.enhancedStepper = "true";
+
+          const parseOrNull = (value) => {
+            if (value == null || value === "") return null;
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : null;
+          };
+
+          const getStep = () => {
+            const parsed = parseOrNull(input.step);
+            return parsed && parsed > 0 ? parsed : 1;
+          };
+
+          const formatValue = (value, step) => {
+            const stepText = String(step);
+            const decimals = stepText.includes(".") ? stepText.split(".")[1].length : 0;
+            if (decimals <= 0) return String(Math.round(value));
+            return value.toFixed(decimals).replace(/\.?0+$/, "");
+          };
+
+          const updateDisabledState = () => {
+            const min = parseOrNull(input.min);
+            const max = parseOrNull(input.max);
+            const value = parseOrNull(input.value);
+
+            downBtn.disabled =
+              !!input.disabled || (min !== null && value !== null && value <= min);
+            upBtn.disabled =
+              !!input.disabled || (max !== null && value !== null && value >= max);
+          };
+
+          const adjustBy = (direction) => {
+            if (input.disabled) return;
+            const step = getStep();
+            const min = parseOrNull(input.min);
+            const max = parseOrNull(input.max);
+            const current = parseOrNull(input.value);
+            let nextValue = current;
+
+            if (nextValue === null) {
+              if (min !== null) {
+                nextValue = min;
+              } else {
+                nextValue = direction > 0 ? step : 0;
+              }
+            } else {
+              nextValue = nextValue + direction * step;
+            }
+
+            if (min !== null) nextValue = Math.max(nextValue, min);
+            if (max !== null) nextValue = Math.min(nextValue, max);
+
+            input.value = formatValue(nextValue, step);
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.dispatchEvent(new Event("change", { bubbles: true }));
+            updateDisabledState();
+          };
+
+          downBtn.addEventListener("click", () => adjustBy(-1));
+          upBtn.addEventListener("click", () => adjustBy(1));
+          input.addEventListener("input", updateDisabledState);
+          input.addEventListener("change", updateDisabledState);
+
+          updateDisabledState();
+        });
+      }
+
+      function enhanceDismissibleMessages(root) {
+        if (!root) return;
+        const messages = root.querySelectorAll(".msg.info, .msg.error");
+        messages.forEach((message) => {
+          const messageId = getMessageId(message);
+          if (messageId && dismissedMessageIds.has(messageId)) {
+            message.remove();
+            return;
+          }
+          if (message.dataset.dismissible === "true") return;
+          message.classList.add("dismissible");
+
+          const closeBtn = document.createElement("button");
+          closeBtn.type = "button";
+          closeBtn.className = "msg-close";
+          closeBtn.setAttribute("aria-label", "Dismiss message");
+          closeBtn.textContent = "×";
+          closeBtn.addEventListener("click", () => {
+            if (messageId) {
+              dismissedMessageIds.add(messageId);
+              persistDismissedMessages();
+            }
+            message.remove();
+          });
+
+          message.appendChild(closeBtn);
+          message.dataset.dismissible = "true";
+        });
+      }
+
+      function setActiveButton(tabName) {
+        tabButtons.forEach((btn) => {
+          if (btn.dataset.tabName === tabName) {
+            btn.classList.add("active");
+          } else {
+            btn.classList.remove("active");
+          }
+        });
+      }
+
+      function snapshotCurrentTab() {
+        if (!activeTab || !tabContent || !sidebarPanel) return;
+        tabCache.set(activeTab, {
+          tabHtml: tabContent.innerHTML,
+          sidebarHtml: sidebarPanel.innerHTML,
+        });
+      }
+
+      function restoreTabFromCache(tabName) {
+        const cached = tabCache.get(tabName);
+        if (!cached || !tabContent || !sidebarPanel) return false;
+        tabContent.innerHTML = cached.tabHtml;
+        sidebarPanel.innerHTML = cached.sidebarHtml;
+        enhanceDismissibleMessages(tabContent);
+        enhanceDismissibleMessages(sidebarPanel);
+        initializeDatePickers(sidebarPanel);
+        enhanceNumberInputs(sidebarPanel);
+        activeTab = tabName;
+        setActiveButton(tabName);
+        return true;
+      }
+
+      function tabEndpoint(tabName, previewOnly) {
+        let url = "/tabs/" + encodeURIComponent(tabName);
+        if (previewOnly) {
+          url += "?preview=1";
+        }
+        return url;
+      }
+
+      async function fetchTabMarkup(tabName, previewOnly) {
+        const url = tabEndpoint(tabName, previewOnly);
+        const response = await fetch(url, { headers: { "HX-Request": "true" } });
+        if (!response.ok) {
+          throw new Error("Failed to fetch tab");
+        }
+        const text = await response.text();
+        const parsed = new DOMParser().parseFromString(text, "text/html");
+        const sidebarNode = parsed.querySelector("#sidebar-panel");
+        const sidebarHtml = sidebarNode ? sidebarNode.innerHTML : (sidebarPanel ? sidebarPanel.innerHTML : "");
+        if (sidebarNode) sidebarNode.remove();
+        const tabHtml = parsed.body ? parsed.body.innerHTML : text;
+        tabCache.set(tabName, { tabHtml, sidebarHtml });
+      }
+
+      function syncServerActiveTab(tabName) {
+        fetch(tabEndpoint(tabName, false), { headers: { "HX-Request": "true" } }).catch(() => {});
+      }
+
+      async function switchTabWithoutReload(tabName) {
+        snapshotCurrentTab();
+        if (restoreTabFromCache(tabName)) {
+          syncServerActiveTab(tabName);
+          return;
+        }
+        if (loading) loading.style.display = "block";
+        try {
+          await fetchTabMarkup(tabName, false);
+          restoreTabFromCache(tabName);
+        } finally {
+          if (loading) loading.style.display = "";
+        }
+      }
+
+      function maybePrefetchFirstTwo() {
+        // Disabled intentionally: preview prefetch introduced stale/duplicate tab cache behavior.
+      }
+
+      snapshotCurrentTab();
+      enhanceDismissibleMessages(document);
+      initializeDatePickers(document);
+      enhanceNumberInputs(document);
+      maybePrefetchFirstTwo();
+
+      document.body.addEventListener("click", function (event) {
+        const insidePicker = event.target.closest("[data-date-picker]");
+        if (!insidePicker) {
+          closeAllDatePickers(null);
+        }
+      });
+
+      document.body.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          closeAllDatePickers(null);
+        }
+      });
+
+      document.body.addEventListener("click", function (event) {
+        const btn = event.target.closest("[data-tab-btn='true']");
+        if (!btn) return;
+        const tabName = btn.dataset.tabName || "";
+        if (!tabName) return;
+
+        setActiveButton(tabName);
+      }, true);
+
+      document.body.addEventListener("htmx:afterSwap", function (event) {
+        enhanceDismissibleMessages(document);
+        if (!event || !event.target || event.target.id !== "tab-content") return;
+        const activeBtn = document.querySelector("[data-tab-btn='true'].active");
+        if (activeBtn && activeBtn.dataset.tabName) {
+          activeTab = activeBtn.dataset.tabName;
+        }
+        initializeDatePickers(sidebarPanel || document);
+        enhanceNumberInputs(sidebarPanel || document);
+        snapshotCurrentTab();
+      });
+    })();
+  </script>
+</body>
+</html>

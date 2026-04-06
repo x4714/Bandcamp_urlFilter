@@ -1,0 +1,192 @@
+<div class="sidebar-header">Configuration</div>
+
+{% if state.messages %}
+  {% for m in state.messages %}
+  {% if m.level != 'error' %}
+  <div class="msg {{ m.level }}">{{ m.text }}</div>
+  {% endif %}
+  {% endfor %}
+{% endif %}
+
+{% if streamrip_config_init_msg %}
+<div class="msg info">{{ streamrip_config_init_msg }}</div>
+{% endif %}
+{% if streamrip_settings_error %}
+<div class="msg warning">{{ streamrip_settings_error }}</div>
+{% endif %}
+{% if smoked_config_message and active_tab == 'Smoked Salmon Upload' %}
+<div class="msg info">{{ smoked_config_message }}</div>
+{% endif %}
+
+{% if active_tab == 'Bandcamp Matcher' %}
+<details class="panel">
+  <summary><span class="panel-caret"></span><span>🎯 Matcher Filter Rules</span></summary>
+  <div class="panel-body">
+    <label>Genre / Tag <span class="help" title="Filter releases by tag/genre text (for example ambient, techno, jazz).">?</span></label>
+    <input type="text" name="tag" value="{{ state.settings.get('tag','') }}" form="matcher-form" {% if state.settings.get('wip_matcher') %}disabled{% endif %} />
+    <label>Location <span class="help" title="Filter releases by location text shown on Bandcamp pages.">?</span></label>
+    <input type="text" name="location" value="{{ state.settings.get('location','') }}" form="matcher-form" {% if state.settings.get('wip_matcher') %}disabled{% endif %} />
+    <label>Min Tracks <span class="help" title="Minimum number of tracks required for a release to pass filtering.">?</span></label>
+    <input type="number" min="1" name="min_tracks" value="{{ state.settings.get('min_tracks','') }}" form="matcher-form" {% if state.settings.get('wip_matcher') %}disabled{% endif %} />
+    <label>Max Tracks <span class="help" title="Maximum number of tracks allowed for a release to pass filtering.">?</span></label>
+    <input type="number" min="1" name="max_tracks" value="{{ state.settings.get('max_tracks','') }}" form="matcher-form" {% if state.settings.get('wip_matcher') %}disabled{% endif %} />
+    <label>Min Duration (min) <span class="help" title="Minimum total runtime in minutes for a release to pass filtering.">?</span></label>
+    <input type="number" min="1" name="min_duration" value="{{ state.settings.get('min_duration','') }}" form="matcher-form" {% if state.settings.get('wip_matcher') %}disabled{% endif %} />
+    <label>Max Duration (min) <span class="help" title="Maximum total runtime in minutes for a release to pass filtering.">?</span></label>
+    <input type="number" min="1" name="max_duration" value="{{ state.settings.get('max_duration','') }}" form="matcher-form" {% if state.settings.get('wip_matcher') %}disabled{% endif %} />
+  </div>
+</details>
+
+<details class="panel date-filter-panel">
+  <summary><span class="panel-caret"></span><span>📅 Matcher Release Date Filter</span></summary>
+  <div class="panel-body">
+    <label>Start Date</label>
+    <div class="date-picker" data-date-picker>
+      <input
+        class="date-picker-input"
+        type="hidden"
+        name="start_date"
+        value="{{ state.settings.get('start_date','') }}"
+        form="matcher-form"
+        {% if state.settings.get('wip_matcher') %}disabled{% endif %}
+      />
+      <button type="button" class="date-picker-trigger" {% if state.settings.get('wip_matcher') %}disabled{% endif %}>
+        <span class="date-picker-trigger-text">Select date</span>
+        <span class="date-picker-trigger-icon">calendar_month</span>
+      </button>
+      <div class="date-picker-popover" hidden>
+        <div class="date-picker-header">
+          <button type="button" class="date-picker-nav" data-nav="-1" aria-label="Previous month">chevron_left</button>
+          <div class="date-picker-month-year" aria-live="polite"></div>
+          <button type="button" class="date-picker-nav" data-nav="1" aria-label="Next month">chevron_right</button>
+        </div>
+        <div class="date-picker-weekdays" aria-hidden="true"></div>
+        <div class="date-picker-grid" role="grid" aria-roledescription="Calendar month"></div>
+        <div class="date-picker-actions">
+          <button type="button" data-action="clear">Clear</button>
+          <button type="button" data-action="today">Today</button>
+        </div>
+      </div>
+    </div>
+    <label>End Date</label>
+    <div class="date-picker" data-date-picker>
+      <input
+        class="date-picker-input"
+        type="hidden"
+        name="end_date"
+        value="{{ state.settings.get('end_date','') }}"
+        form="matcher-form"
+        {% if state.settings.get('wip_matcher') %}disabled{% endif %}
+      />
+      <button type="button" class="date-picker-trigger" {% if state.settings.get('wip_matcher') %}disabled{% endif %}>
+        <span class="date-picker-trigger-text">Select date</span>
+        <span class="date-picker-trigger-icon">calendar_month</span>
+      </button>
+      <div class="date-picker-popover" hidden>
+        <div class="date-picker-header">
+          <button type="button" class="date-picker-nav" data-nav="-1" aria-label="Previous month">chevron_left</button>
+          <div class="date-picker-month-year" aria-live="polite"></div>
+          <button type="button" class="date-picker-nav" data-nav="1" aria-label="Next month">chevron_right</button>
+        </div>
+        <div class="date-picker-weekdays" aria-hidden="true"></div>
+        <div class="date-picker-grid" role="grid" aria-roledescription="Calendar month"></div>
+        <div class="date-picker-actions">
+          <button type="button" data-action="clear">Clear</button>
+          <button type="button" data-action="today">Today</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</details>
+
+<details class="panel" open>
+  <summary><span class="panel-caret"></span><span>⚙️ Matcher Run Settings</span></summary>
+  <div class="panel-body">
+    <label>Pricing</label>
+    <select name="free_mode" form="matcher-form" {% if state.settings.get('wip_matcher') %}disabled{% endif %}>
+      {% set current_free = state.settings.get('free_mode', 'All') %}
+      {% for opt in ['All','Free','Paid'] %}
+      <option value="{{ opt }}" {% if current_free == opt %}selected{% endif %}>{{ opt }}</option>
+      {% endfor %}
+    </select>
+    <label class="row-check">
+      <input type="checkbox" name="dry_run" value="true" form="matcher-form" {% if state.settings.get('dry_run') %}checked{% endif %} {% if state.settings.get('wip_matcher') %}disabled{% endif %} />
+      Dry Run
+    </label>
+  </div>
+</details>
+{% endif %}
+
+{% if active_tab != 'Smoked Salmon Upload' %}
+<details class="panel" open>
+  <summary><span class="panel-caret"></span><span>🔐 Qobuz Token</span></summary>
+  <div class="panel-body">
+    <button class="btn sidebar-btn" type="button" hx-post="/actions/open-env" hx-target="#tab-content" hx-swap="innerHTML">📝 Open .env for Qobuz Token</button>
+    <button class="btn sidebar-btn" type="button" hx-post="/actions/qobuz-help" hx-target="#tab-content" hx-swap="innerHTML">Get Qobuz Token</button>
+  </div>
+</details>
+{% endif %}
+
+{% if active_tab == 'Direct Qobuz Rip' %}
+<details class="panel" open>
+  <summary><span class="panel-caret"></span><span>⚙️ Streamrip Settings</span></summary>
+  <div class="panel-body">
+    <label>Rip Quality <span class="help" title="Set the default streamrip quality used for downloads.">?</span></label>
+    <select name="rip_quality" form="direct-rip-form" {% if state.settings.get('wip_direct_rip') %}disabled{% endif %}>
+      {% set current_quality = state.settings.get('rip_quality', default_rip_quality) %}
+      {% for q in quality_options %}
+      <option value="{{ q }}" {% if current_quality|int == q %}selected{% endif %}>{{ format_quality_option(q) }}</option>
+      {% endfor %}
+    </select>
+    <label>Rip Codec <span class="help" title="Set the default audio codec used by streamrip.">?</span></label>
+    <select name="rip_codec" form="direct-rip-form" {% if state.settings.get('wip_direct_rip') %}disabled{% endif %}>
+      {% set current_codec = state.settings.get('rip_codec', default_codec) %}
+      {% for codec in codec_options %}
+      <option value="{{ codec }}" {% if current_codec == codec %}selected{% endif %}>{{ codec }}</option>
+      {% endfor %}
+    </select>
+    <p class="caption">Qobuz and Tidal ripping requires a premium subscription.</p>
+  </div>
+</details>
+{% elif active_tab == 'Bandcamp Matcher' %}
+<details class="panel">
+  <summary><span class="panel-caret"></span><span>⚙️ Streamrip Settings</span></summary>
+  <div class="panel-body">
+    <label>Rip Quality</label>
+    <select name="rip_quality" form="matcher-form" {% if state.settings.get('wip_matcher') %}disabled{% endif %}>
+      {% set current_quality = state.settings.get('rip_quality', default_rip_quality) %}
+      {% for q in quality_options %}
+      <option value="{{ q }}" {% if current_quality|int == q %}selected{% endif %}>{{ format_quality_option(q) }}</option>
+      {% endfor %}
+    </select>
+    <label>Rip Codec</label>
+    <select name="rip_codec" form="matcher-form" {% if state.settings.get('wip_matcher') %}disabled{% endif %}>
+      {% set current_codec = state.settings.get('rip_codec', default_codec) %}
+      {% for codec in codec_options %}
+      <option value="{{ codec }}" {% if current_codec == codec %}selected{% endif %}>{{ codec }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</details>
+{% endif %}
+
+<details class="panel">
+  <summary><span class="panel-caret"></span><span>🚧 WIP Toggles</span></summary>
+  <div class="panel-body">
+    <form hx-post="/actions/set-wip" hx-target="#tab-content" hx-swap="innerHTML" class="stack">
+      <label class="row-check">
+        <input type="checkbox" name="wip_matcher" value="true" {% if state.settings.get('wip_matcher') %}checked{% endif %} />
+        Bandcamp Matcher WIP
+      </label>
+      <label class="row-check">
+        <input type="checkbox" name="wip_direct_rip" value="true" {% if state.settings.get('wip_direct_rip') %}checked{% endif %} />
+        Direct Qobuz Rip WIP
+      </label>
+      <label class="row-check">
+        <input type="checkbox" name="wip_smoked_salmon" value="true" {% if state.settings.get('wip_smoked_salmon') %}checked{% endif %} />
+        Smoked Salmon Upload WIP
+      </label>
+      <button class="btn" type="submit">Apply WIP Toggles</button>
+    </form>
+  </div>
+</details>
