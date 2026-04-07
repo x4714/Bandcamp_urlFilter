@@ -5,15 +5,17 @@ import streamlit as st
 from app_modules.streamrip import export_qobuz_batches, extract_qobuz_urls, run_streamrip_batches
 
 
-def _read_text_upload(uploaded_file) -> str:
-    if uploaded_file is None:
+def _read_text_upload(uploaded_files) -> str:
+    if not uploaded_files:
         return ""
-    return uploaded_file.getvalue().decode("utf-8", errors="ignore")
+    if not isinstance(uploaded_files, list):
+        uploaded_files = [uploaded_files]
+    return "\n".join(f.getvalue().decode("utf-8", errors="ignore") for f in uploaded_files)
 
 
 def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:
     try:
-        with open(log_path, "r", encoding="utf-8") as f:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             text = f.read()
         return text[-max_chars:]
     except Exception:
@@ -43,13 +45,14 @@ def render_direct_qobuz_rip_tab(
         placeholder="https://www.qobuz.com/...\nhttps://play.qobuz.com/...",
         disabled=locked,
     )
-    uploaded_qobuz_file = st.file_uploader(
-        "Or upload a Qobuz links file",
+    uploaded_qobuz_files = st.file_uploader(
+        "Or upload Qobuz links file(s)",
         type=["txt", "log"],
         key="direct_qobuz_upload",
+        accept_multiple_files=True,
         disabled=locked,
     )
-    uploaded_text = _read_text_upload(uploaded_qobuz_file)
+    uploaded_text = _read_text_upload(uploaded_qobuz_files)
     merged_text = f"{pasted_text}\n{uploaded_text}".strip()
     direct_urls = extract_qobuz_urls(merged_text)
 
@@ -105,7 +108,7 @@ def render_direct_qobuz_rip_tab(
                 rip_progress_caption.caption(message)
 
             with st.spinner("Running streamrip for parsed Qobuz links..."):
-                success_count, total_urls, failures, log_path = run_streamrip_batches(
+                success_count, total_urls, failures, skipped, log_path = run_streamrip_batches(
                     batch_files,
                     rip_quality,
                     rip_codec,
@@ -115,10 +118,16 @@ def render_direct_qobuz_rip_tab(
             _update_live_log(log_path, _read_log_tail(log_path))
             _update_rip_status(total_urls, total_urls, "Streamrip run finished.")
             st.session_state.direct_rip_last_log_path = log_path
-            if failures:
-                st.session_state.direct_rip_last_level = "error"
+            
+            if failures or skipped:
+                st.session_state.direct_rip_last_level = "warning" if failures else "success"
+                msg_parts = []
+                if failures:
+                    msg_parts.append(f"Errors ({len(failures)}):\n" + "\n".join(failures))
+                if skipped:
+                    msg_parts.append(f"Skipped ({len(skipped)}):\n" + "\n".join(skipped))
                 st.session_state.direct_rip_last_message = (
-                    f"Direct rip processed {total_urls} URL(s) with errors:\n" + "\n".join(failures)
+                    f"Direct rip processed {total_urls} URL(s):\n" + "\n\n".join(msg_parts)
                 )
             else:
                 st.session_state.direct_rip_last_level = "success"
@@ -133,11 +142,14 @@ def render_direct_qobuz_rip_tab(
         elif st.session_state.direct_rip_last_level == "error":
             st.session_state.auto_scroll_alerts_once = True
             st.error(st.session_state.direct_rip_last_message)
+        elif st.session_state.direct_rip_last_level == "warning":
+            st.session_state.auto_scroll_alerts_once = True
+            st.warning(st.session_state.direct_rip_last_message)
         else:
             st.info(st.session_state.direct_rip_last_message)
     if st.session_state.direct_rip_last_log_path and os.path.exists(st.session_state.direct_rip_last_log_path):
         st.caption(f"Last direct rip log: {st.session_state.direct_rip_last_log_path}")
-        with open(st.session_state.direct_rip_last_log_path, "r", encoding="utf-8") as f:
+        with open(st.session_state.direct_rip_last_log_path, "r", encoding="utf-8", errors="replace") as f:
             log_text = f.read()
         st.download_button(
             "Download Direct Rip Log",

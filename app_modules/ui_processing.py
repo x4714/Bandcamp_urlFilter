@@ -13,7 +13,7 @@ from app_modules.streamrip import export_qobuz_batches, run_streamrip_batches
 
 def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:
     try:
-        with open(log_path, "r", encoding="utf-8") as f:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             text = f.read()
         return text[-max_chars:]
     except Exception:
@@ -281,7 +281,7 @@ def render_results_and_exports(
                         rip_progress_caption.caption(message)
 
                     with st.spinner("Running streamrip for exported batches..."):
-                        success_count, total_urls, failures, log_path = run_streamrip_batches(
+                        success_count, total_urls, failures, skipped, log_path = run_streamrip_batches(
                             batch_files,
                             rip_quality,
                             rip_codec,
@@ -291,10 +291,16 @@ def render_results_and_exports(
                     _update_live_log(log_path, _read_log_tail(log_path))
                     _update_rip_status(total_urls, total_urls, "Streamrip run finished.")
                     st.session_state.rip_last_log_path = log_path
-                    if failures:
-                        st.session_state.rip_last_level = "error"
+                    
+                    if failures or skipped:
+                        st.session_state.rip_last_level = "warning" if failures else "success"
+                        msg_parts = []
+                        if failures:
+                            msg_parts.append(f"Errors ({len(failures)}):\n" + "\n".join(failures))
+                        if skipped:
+                            msg_parts.append(f"Skipped ({len(skipped)}):\n" + "\n".join(skipped))
                         st.session_state.rip_last_message = (
-                            f"Auto rip processed {total_urls} URL(s) with errors:\n" + "\n".join(failures)
+                            f"Auto rip processed {total_urls} URL(s):\n" + "\n\n".join(msg_parts)
                         )
                     else:
                         st.session_state.rip_last_level = "success"
@@ -312,11 +318,14 @@ def render_results_and_exports(
         elif st.session_state.rip_last_level == "error":
             st.session_state.auto_scroll_alerts_once = True
             st.error(st.session_state.rip_last_message)
+        elif st.session_state.rip_last_level == "warning":
+            st.session_state.auto_scroll_alerts_once = True
+            st.warning(st.session_state.rip_last_message)
         else:
             st.info(st.session_state.rip_last_message)
     if st.session_state.rip_last_log_path and os.path.exists(st.session_state.rip_last_log_path):
         st.caption(f"Last rip log: {st.session_state.rip_last_log_path}")
-        with open(st.session_state.rip_last_log_path, "r", encoding="utf-8") as f:
+        with open(st.session_state.rip_last_log_path, "r", encoding="utf-8", errors="replace") as f:
             log_text = f.read()
         st.download_button(
             "Download Last Rip Log",

@@ -599,7 +599,7 @@ def run_streamrip_batches(
     codec_selection: str,
     progress_callback: Optional[Callable[[str, str], None]] = None,
     status_callback: Optional[Callable[[int, int, str], None]] = None,
-) -> tuple[int, int, List[str], str]:
+) -> tuple[int, int, List[str], List[str], str]:
     base_cmd = resolve_streamrip_command()
     log_path = os.path.abspath(os.path.join("exports", "streamrip_last.log"))
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -657,6 +657,7 @@ def run_streamrip_batches(
     success_count = 0
     total_urls = 0
     failures: List[str] = []
+    skipped: List[str] = []
     batch_urls: List[tuple[str, List[str]]] = []
     for fname in batch_files:
         rel_path = os.path.join("exports", fname)
@@ -749,10 +750,12 @@ def run_streamrip_batches(
                 log.write(f"[exit {result_code}] {datetime.now(timezone.utc).isoformat()}\n\n")
             if progress_callback:
                 progress_callback(log_path, _read_log_tail(log_path))
+                
+            with open(log_path, "r", encoding="utf-8", errors="replace") as log_read:
+                log_read.seek(log_offset_before)
+                recent_output = log_read.read().lower()
+
             if result_code != 0:
-                with open(log_path, "r", encoding="utf-8") as log_read:
-                    log_read.seek(log_offset_before)
-                    recent_output = log_read.read().lower()
                 if "enter your qobuz email" in recent_output or "enter your qobuz password" in recent_output:
                     failures.append(
                         f"{fname}: {url} -> Streamrip is not configured. "
@@ -762,6 +765,9 @@ def run_streamrip_batches(
                 else:
                     failures.append(f"{fname}: {url} -> exit code {result_code}")
                 file_failed = True
+            else:
+                if "already in the database" in recent_output or "skipping" in recent_output or "already downloaded" in recent_output:
+                    skipped.append(f"{fname}: {url} -> already downloaded/skipped")
             processed_urls += 1
             if status_callback:
                 if result_code == 0:
@@ -793,12 +799,12 @@ def run_streamrip_batches(
         else:
             status_callback(total_urls, total_urls, "Finished successfully.")
 
-    return success_count, total_urls, failures, log_path
+    return success_count, total_urls, failures, skipped, log_path
 
 
 def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:
     try:
-        with open(log_path, "r", encoding="utf-8") as f:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             text = f.read()
         return text[-max_chars:]
     except Exception:
