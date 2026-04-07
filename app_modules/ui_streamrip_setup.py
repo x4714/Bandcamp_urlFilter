@@ -1,8 +1,10 @@
 import os
+import sys
 from datetime import datetime, timezone
 
 import streamlit as st
 
+from app_modules.debug_logging import emit_debug
 from app_modules.filesystem import list_directory_entries
 from app_modules.streamrip import (
     CODEC_OPTIONS,
@@ -17,12 +19,17 @@ from app_modules.streamrip import (
 )
 
 
+def _setup_debug(message: str) -> None:
+    emit_debug("streamrip setup", message)
+
+
 def init_streamrip_form_state(
     streamrip_settings: dict,
     default_rip_quality: int,
     default_codec: str,
     streamrip_config_path: str | None = None,
 ) -> None:
+    _setup_debug("init_streamrip_form_state() called.")
     resolved_config_path = streamrip_config_path or get_streamrip_config_path()
     use_auth = bool(streamrip_settings.get("use_auth_token", True))
     email_or_userid = str(streamrip_settings.get("email_or_userid", ""))
@@ -36,8 +43,14 @@ def init_streamrip_form_state(
     failed_downloads_path = str(streamrip_settings.get("failed_downloads_path", default_failed_path))
 
     if quality not in QUALITY_OPTIONS:
+        _setup_debug(
+            f"Invalid configured quality `{quality}`; falling back to default `{default_rip_quality}`."
+        )
         quality = default_rip_quality
     if codec not in CODEC_OPTIONS:
+        _setup_debug(
+            f"Invalid configured codec `{codec}`; falling back to default `{default_codec}`."
+        )
         codec = default_codec
 
     signature = (
@@ -52,6 +65,7 @@ def init_streamrip_form_state(
         failed_downloads_path,
     )
     if st.session_state.get("streamrip_form_settings_signature") == signature:
+        _setup_debug("Form state signature unchanged; skipping re-init.")
         return
 
     st.session_state.streamrip_form_use_auth_token = use_auth
@@ -64,9 +78,11 @@ def init_streamrip_form_state(
     st.session_state.streamrip_form_downloads_db_path = downloads_db_path
     st.session_state.streamrip_form_failed_downloads_path = failed_downloads_path
     st.session_state.streamrip_form_settings_signature = signature
+    _setup_debug("Streamrip form state initialized/refreshed from settings.")
 
 
 def init_streamrip_download_state(default_downloads_folder: str) -> None:
+    _setup_debug("init_streamrip_download_state() called.")
     if "streamrip_downloads_folder_persist" not in st.session_state:
         st.session_state.streamrip_downloads_folder_persist = default_downloads_folder
     if "streamrip_downloads_folder_draft" not in st.session_state:
@@ -76,6 +92,10 @@ def init_streamrip_download_state(default_downloads_folder: str) -> None:
     if "streamrip_browser_path" not in st.session_state:
         start_path = st.session_state.streamrip_downloads_folder_draft or os.path.expanduser("~")
         st.session_state.streamrip_browser_path = start_path if os.path.isdir(start_path) else os.path.expanduser("~")
+    _setup_debug(
+        f"Download state ready. draft=`{st.session_state.streamrip_downloads_folder_draft}`, "
+        f"browser_path=`{st.session_state.streamrip_browser_path}`"
+    )
 
 
 def render_streamrip_setup(
@@ -91,7 +111,13 @@ def render_streamrip_setup(
     key_prefix: str = "streamrip_setup",
     include_browser: bool = False,
 ) -> None:
+    _setup_debug(
+        f"render_streamrip_setup() called. needs_setup={streamrip_needs_setup}, "
+        f"config_ready={streamrip_config_ready}, include_browser={include_browser}"
+    )
+
     def _show_error(message: str) -> None:
+        _setup_debug(f"UI error shown: {message}")
         st.session_state.streamrip_setup_matcher_scroll_once = True
         st.session_state.auto_scroll_alerts_once = True
         st.error(message)
@@ -116,6 +142,7 @@ def render_streamrip_setup(
         if needs_sync:
             st.session_state[widget_key] = shared_value
             st.session_state[sync_marker_key] = current_signature
+            _setup_debug(f"Widget primed `{widget_key}` from `{shared_key}`.")
 
     _prime_widget("use_auth_token", "streamrip_form_use_auth_token")
     _prime_widget("email_or_userid", "streamrip_form_email_or_userid")
@@ -145,6 +172,7 @@ def render_streamrip_setup(
                     help="Copies QOBUZ_USER_AUTH_TOKEN and optional QOBUZ_APP_ID from .env into Streamrip config fields.",
                     key=_k("autofill_btn"),
                 ):
+                    _setup_debug("Auto-Fill Token/App ID button clicked.")
                     current_use_auth = bool(st.session_state.get("streamrip_form_use_auth_token", True))
                     current_email = str(st.session_state.get("streamrip_form_email_or_userid", ""))
                     current_token = str(st.session_state.get("streamrip_form_password_or_token", ""))
@@ -179,9 +207,11 @@ def render_streamrip_setup(
                         failed_downloads_path=current_failed_downloads_path,
                     )
                     if ok:
+                        _setup_debug("Auto-fill save succeeded; rerunning app.")
                         st.success(msg)
                         st.rerun()
                     else:
+                        _setup_debug("Auto-fill save failed.")
                         _show_error(msg)
             with col_setup2:
                 if st.button(
@@ -189,6 +219,7 @@ def render_streamrip_setup(
                     help="Calls Qobuz login API with your token/app ID and writes the detected account identifier into config.",
                     key=_k("fetch_user_btn"),
                 ):
+                    _setup_debug("Fetch User ID / Email button clicked.")
                     current_email = str(st.session_state.get("streamrip_form_email_or_userid", ""))
                     current_token = str(st.session_state.get("streamrip_form_password_or_token", ""))
                     current_app_id = str(st.session_state.get("streamrip_form_app_id", ""))
@@ -213,6 +244,7 @@ def render_streamrip_setup(
                         app_id_for_lookup, token_for_lookup
                     )
                     if not ok_lookup:
+                        _setup_debug(f"Fetch user identifier failed: {lookup_msg}")
                         _show_error(lookup_msg)
                     else:
                         save_ok, save_msg = save_streamrip_settings(
@@ -228,12 +260,14 @@ def render_streamrip_setup(
                             failed_downloads_path=current_failed_downloads_path,
                         )
                         if save_ok:
+                            _setup_debug("Fetched user identifier and saved config successfully.")
                             st.success(
                                 f"{lookup_msg}: {lookup_data.get('identifier', '')}. "
                                 "Saved to streamrip config."
                             )
                             st.rerun()
                         else:
+                            _setup_debug(f"Saving fetched user identifier failed: {save_msg}")
                             _show_error(save_msg)
             with col_setup3:
                 if st.button(
@@ -241,6 +275,7 @@ def render_streamrip_setup(
                     help="Reloads Streamrip settings from config.toml and refreshes this setup panel.",
                     key=_k("reload_btn"),
                 ):
+                    _setup_debug("Reload Streamrip Config button clicked; rerunning app.")
                     st.rerun()
 
             if include_browser:
@@ -323,32 +358,39 @@ def render_streamrip_setup(
                 )
 
             if save_streamrip_btn:
+                _setup_debug("Save Streamrip Config submitted.")
                 downloads_folder_cfg = str(downloads_folder_cfg).strip()
                 if not downloads_folder_cfg:
+                    _setup_debug("Validation failed: downloads folder blank.")
                     _show_error("Downloads Folder Path cannot be blank.")
                     return
                 normalized_downloads_path = os.path.abspath(os.path.expanduser(downloads_folder_cfg))
                 if not os.path.isdir(normalized_downloads_path):
+                    _setup_debug(f"Validation failed: downloads folder invalid `{normalized_downloads_path}`.")
                     _show_error(f"Downloads Folder Path is not a valid folder: `{normalized_downloads_path}`")
                     return
                 downloads_db_path_cfg = str(downloads_db_path_cfg).strip()
                 if not downloads_db_path_cfg:
+                    _setup_debug("Validation failed: downloads DB path blank.")
                     _show_error("Downloads DB Path cannot be blank.")
                     return
                 normalized_downloads_db_path = os.path.abspath(os.path.expanduser(downloads_db_path_cfg))
                 try:
                     os.makedirs(os.path.dirname(normalized_downloads_db_path), exist_ok=True)
                 except Exception as e:
+                    _setup_debug(f"Failed creating Downloads DB parent directory: {e}")
                     _show_error(f"Could not create Downloads DB parent directory: {e}")
                     return
                 failed_downloads_path_cfg = str(failed_downloads_path_cfg).strip()
                 if not failed_downloads_path_cfg:
+                    _setup_debug("Validation failed: failed downloads path blank.")
                     _show_error("Failed Downloads Folder Path cannot be blank.")
                     return
                 normalized_failed_downloads_path = os.path.abspath(os.path.expanduser(failed_downloads_path_cfg))
                 try:
                     os.makedirs(normalized_failed_downloads_path, exist_ok=True)
                 except Exception as e:
+                    _setup_debug(f"Failed creating failed downloads directory: {e}")
                     _show_error(f"Could not create Failed Downloads Folder Path: {e}")
                     return
                 selected_quality = cfg_quality if cfg_quality is not None else default_rip_quality
@@ -370,6 +412,7 @@ def render_streamrip_setup(
                     failed_downloads_path=normalized_failed_downloads_path,
                 )
                 if ok:
+                    _setup_debug("Streamrip config save succeeded from setup form; syncing session state.")
                     st.session_state.streamrip_downloads_folder_persist = normalized_downloads_path
                     st.session_state.streamrip_downloads_folder_draft = normalized_downloads_path
                     st.session_state.streamrip_form_use_auth_token = bool(use_auth_token_cfg)
@@ -384,6 +427,7 @@ def render_streamrip_setup(
                     st.success(msg)
                     st.rerun()
                 else:
+                    _setup_debug(f"Streamrip config save failed from setup form: {msg}")
                     _show_error(msg)
 
             with st.expander("Raw streamrip config", expanded=False):
@@ -400,6 +444,7 @@ def render_streamrip_setup(
 
 
 def _render_download_folder_browser() -> None:
+    _setup_debug("Rendering download folder browser.")
     with st.expander("Streamrip Download Folder Browser (optional)", expanded=False):
         browser_path = st.session_state.streamrip_browser_path
         if not os.path.isdir(browser_path):
@@ -426,6 +471,14 @@ def _render_download_folder_browser() -> None:
             st.session_state.streamrip_path_input_pending = ""
         if "streamrip_path_submit_requested" not in st.session_state:
             st.session_state.streamrip_path_submit_requested = False
+        if "streamrip_browser_entries_cache_path" not in st.session_state:
+            st.session_state.streamrip_browser_entries_cache_path = ""
+        if "streamrip_browser_entries_cache_data" not in st.session_state:
+            st.session_state.streamrip_browser_entries_cache_data = []
+        if "streamrip_browser_entries_cache_ts" not in st.session_state:
+            st.session_state.streamrip_browser_entries_cache_ts = 0.0
+        if "streamrip_browser_entries_refresh_requested" not in st.session_state:
+            st.session_state.streamrip_browser_entries_refresh_requested = False
 
         def resolve_path_input(target_path: str, base_path: str) -> str:
             raw = (target_path or "").strip()
@@ -440,6 +493,7 @@ def _render_download_folder_browser() -> None:
             current_base = os.path.abspath(st.session_state.streamrip_browser_path)
             target_abs = resolve_path_input(target_path, current_base)
             if not os.path.isdir(target_abs):
+                _setup_debug(f"Browser navigation failed; path not found `{target_abs}`.")
                 return False
             current_abs = os.path.abspath(st.session_state.streamrip_browser_path)
             if target_abs == current_abs:
@@ -449,6 +503,8 @@ def _render_download_folder_browser() -> None:
             st.session_state.streamrip_nav_back = back_stack[-200:]
             st.session_state.streamrip_nav_forward = []
             st.session_state.streamrip_browser_path = target_abs
+            st.session_state.streamrip_browser_entries_refresh_requested = True
+            _setup_debug(f"Browser navigated to `{target_abs}`.")
             return True
 
         def clear_folder_selection() -> None:
@@ -563,6 +619,7 @@ def _render_download_folder_browser() -> None:
                 st.session_state.streamrip_nav_back = back_stack
                 st.session_state.streamrip_nav_forward = forward_stack[-200:]
                 st.session_state.streamrip_browser_path = target_abs
+                st.session_state.streamrip_browser_entries_refresh_requested = True
                 st.rerun()
             parent = os.path.dirname(browser_path.rstrip(os.sep)) or browser_path
             if parent != browser_path:
@@ -572,6 +629,7 @@ def _render_download_folder_browser() -> None:
                 forward_stack.append(current_abs)
                 st.session_state.streamrip_nav_forward = forward_stack[-200:]
                 st.session_state.streamrip_browser_path = parent_abs
+                st.session_state.streamrip_browser_entries_refresh_requested = True
                 st.rerun()
 
         if nav_forward_clicked and st.session_state.streamrip_nav_forward:
@@ -584,6 +642,7 @@ def _render_download_folder_browser() -> None:
             st.session_state.streamrip_nav_forward = forward_stack
             st.session_state.streamrip_nav_back = back_stack[-200:]
             st.session_state.streamrip_browser_path = target_abs
+            st.session_state.streamrip_browser_entries_refresh_requested = True
             st.rerun()
 
         if nav_home_clicked:
@@ -612,19 +671,23 @@ def _render_download_folder_browser() -> None:
                 or "\\" in raw_name
             )
             if invalid_name:
+                _setup_debug(f"Create folder rejected invalid name `{raw_name}`.")
                 st.warning("Enter a valid folder name.")
             else:
                 new_folder_path = os.path.join(browser_path, raw_name)
                 if os.path.exists(new_folder_path):
+                    _setup_debug(f"Create folder rejected existing path `{new_folder_path}`.")
                     st.session_state.auto_scroll_alerts_once = True
                     st.error(f"Folder already exists: `{raw_name}`")
                 else:
                     try:
                         os.makedirs(new_folder_path, exist_ok=False)
+                        _setup_debug(f"Created folder `{new_folder_path}` from browser.")
                         st.session_state.streamrip_browser_notice = f"Created folder `{raw_name}`."
                         if navigate_to(new_folder_path):
                             st.rerun()
                     except Exception as e:
+                        _setup_debug(f"Create folder failed for `{new_folder_path}`: {e}")
                         st.session_state.auto_scroll_alerts_once = True
                         st.error(f"Could not create folder: {e}")
 
@@ -638,7 +701,31 @@ def _render_download_folder_browser() -> None:
         if selected_candidate and not os.path.isdir(selected_candidate):
             st.session_state.streamrip_folder_selection = ""
 
-        entries = list_directory_entries(browser_path)
+        cache_ttl_seconds = 60.0
+        entries_cache_path = str(st.session_state.streamrip_browser_entries_cache_path)
+        entries_cache_data = list(st.session_state.streamrip_browser_entries_cache_data)
+        entries_cache_ts = float(st.session_state.streamrip_browser_entries_cache_ts)
+        cache_is_fresh = (datetime.now(timezone.utc).timestamp() - entries_cache_ts) <= cache_ttl_seconds
+        refresh_requested = bool(st.session_state.streamrip_browser_entries_refresh_requested)
+        should_refresh_entries = (
+            refresh_requested
+            or entries_cache_path != browser_path
+            or not cache_is_fresh
+            or not entries_cache_data
+        )
+        if should_refresh_entries:
+            entries = list_directory_entries(browser_path)
+            st.session_state.streamrip_browser_entries_cache_path = browser_path
+            st.session_state.streamrip_browser_entries_cache_data = entries
+            st.session_state.streamrip_browser_entries_cache_ts = datetime.now(timezone.utc).timestamp()
+            st.session_state.streamrip_browser_entries_refresh_requested = False
+            _setup_debug(
+                f"Browser entries refreshed for `{browser_path}` "
+                f"(refresh_requested={refresh_requested}, cache_fresh={cache_is_fresh})."
+            )
+        else:
+            entries = entries_cache_data
+            _setup_debug(f"Browser entries served from cache for `{browser_path}` ({len(entries)} entries).")
         if not entries:
             st.markdown(
                 "<div style='text-align:center; color:#8a8a8a; padding:48px 0; font-size:1.05rem;'>Empty</div>",

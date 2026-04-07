@@ -8,28 +8,43 @@ import time
 from datetime import datetime, timezone
 from typing import Callable, Dict, List, Optional
 
+from app_modules.debug_logging import emit_debug
+
 SALMON_SOURCE_OPTIONS = ["WEB", "CD", "VINYL", "SOUNDBOARD", "SACD", "DAT", "CASSETTE"]
 SALMON_REQUIRED_TOOLS = ["flac", "sox", "lame", "mp3val", "curl", "git"]
 
 
+def _salmon_debug(message: str) -> None:
+    emit_debug("smoked-salmon", message)
+
+
 def get_smoked_salmon_config_path() -> str:
+    _salmon_debug("Resolving smoked-salmon config path.")
     if os.name == "nt":
         local_appdata = os.getenv("LOCALAPPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Local")
-        return os.path.join(local_appdata, "smoked-salmon", "config.toml")
+        resolved = os.path.join(local_appdata, "smoked-salmon", "config.toml")
+        _salmon_debug(f"Using Windows smoked-salmon config path: `{resolved}`")
+        return resolved
     if sys.platform == "darwin":
-        return os.path.join(
+        resolved = os.path.join(
             os.path.expanduser("~"),
             "Library",
             "Application Support",
             "smoked-salmon",
             "config.toml",
         )
+        _salmon_debug(f"Using macOS smoked-salmon config path: `{resolved}`")
+        return resolved
     config_home = os.getenv("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return os.path.join(config_home, "smoked-salmon", "config.toml")
+    resolved = os.path.join(config_home, "smoked-salmon", "config.toml")
+    _salmon_debug(f"Using Linux smoked-salmon config path: `{resolved}`")
+    return resolved
 
 
 def ensure_smoked_salmon_config_file(config_path: str) -> tuple[bool, str]:
+    _salmon_debug(f"Ensuring smoked-salmon config exists at `{config_path}`.")
     if os.path.exists(config_path):
+        _salmon_debug("smoked-salmon config already exists.")
         return True, ""
 
     template_path = find_smoked_salmon_default_config_template_path()
@@ -37,17 +52,21 @@ def ensure_smoked_salmon_config_file(config_path: str) -> tuple[bool, str]:
         try:
             os.makedirs(os.path.dirname(config_path), exist_ok=True)
             shutil.copyfile(template_path, config_path)
+            _salmon_debug(f"Copied template config from `{template_path}` to `{config_path}`.")
             _ok_dir, dir_msg = ensure_smoked_salmon_directory_settings(config_path)
             suffix = f" {dir_msg}" if dir_msg else ""
             return True, f"Created smoked-salmon config from `{template_path}` at `{config_path}`.{suffix}"
         except Exception as e:
+            _salmon_debug(f"Could not create config from template: {e}")
             return False, f"Could not create smoked-salmon config: {e}"
 
     # Fallback: run salmon once to let it generate config.default.toml interactively,
     # then copy it to config.toml.
     boot_ok, boot_msg = bootstrap_smoked_salmon_default_config(config_path)
     if boot_ok and os.path.exists(config_path):
+        _salmon_debug("Bootstrap created smoked-salmon config successfully.")
         return True, boot_msg
+    _salmon_debug("Failed to create smoked-salmon config via template and bootstrap paths.")
     return False, (
         "Could not find smoked-salmon default template (`src/salmon/data/config.default.toml`) "
         "and could not auto-generate config via `salmon`."
@@ -55,13 +74,16 @@ def ensure_smoked_salmon_config_file(config_path: str) -> tuple[bool, str]:
 
 
 def read_smoked_salmon_config_text(config_path: str) -> str:
+    _salmon_debug(f"Reading smoked-salmon config text from `{config_path}`.")
     if not os.path.exists(config_path):
+        _salmon_debug("Config text read requested, but file does not exist.")
         return ""
     with open(config_path, "r", encoding="utf-8") as f:
         return f.read()
 
 
 def save_smoked_salmon_config_text(config_path: str, text: str) -> tuple[bool, str]:
+    _salmon_debug(f"Saving smoked-salmon config text to `{config_path}`.")
     try:
         target_path = os.path.abspath(os.path.expanduser(config_path))
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
@@ -74,6 +96,7 @@ def save_smoked_salmon_config_text(config_path: str, text: str) -> tuple[bool, s
             f"smoked-salmon config saved: {target_path} ({len(text.encode('utf-8'))} bytes).{dir_suffix}",
         )
     except Exception as e:
+        _salmon_debug(f"Could not save smoked-salmon config: {e}")
         return False, f"Could not save smoked-salmon config: {e}"
 
 
@@ -115,8 +138,12 @@ def _upsert_toml_value(text: str, section_name: str, key: str, rendered_value: s
 
 
 def apply_smoked_salmon_ai_review_settings(config_path: str, enabled: bool, api_key: str) -> tuple[bool, str]:
+    _salmon_debug(
+        f"Applying AI review settings in `{config_path}` (enabled={enabled}, api_key_present={bool(api_key)})."
+    )
     current_text = read_smoked_salmon_config_text(config_path)
     if not current_text:
+        _salmon_debug("AI review settings update failed: config text was empty/unreadable.")
         return False, f"Could not read smoked-salmon config at `{config_path}`."
 
     updated = _upsert_toml_value(
@@ -135,12 +162,16 @@ def apply_smoked_salmon_ai_review_settings(config_path: str, enabled: bool, api_
         )
 
     if updated == current_text:
+        _salmon_debug("AI review settings already matched config; no file write needed.")
         return True, "AI review settings already match config."
+    _salmon_debug("AI review settings changed; writing updated config.")
     return save_smoked_salmon_config_text(config_path, updated)
 
 def resolve_smoked_salmon_command() -> List[str]:
+    _salmon_debug("Resolving smoked-salmon command.")
     salmon_bin = shutil.which("salmon")
     if salmon_bin:
+        _salmon_debug(f"Using salmon binary from PATH: `{salmon_bin}`.")
         return [salmon_bin]
 
     uv_bin = resolve_uv_command()
@@ -151,11 +182,14 @@ def resolve_smoked_salmon_command() -> List[str]:
             text=True,
         )
         if probe.returncode == 0:
+            _salmon_debug(f"Using `uv tool run salmon` via `{uv_bin}`.")
             return [uv_bin, "tool", "run", "salmon"]
+    _salmon_debug("Could not resolve smoked-salmon command.")
     return []
 
 
 def resolve_uv_command() -> str:
+    _salmon_debug("Resolving uv command.")
     candidates = []
     direct = shutil.which("uv")
     if direct:
@@ -196,19 +230,22 @@ def resolve_uv_command() -> str:
                 timeout=5,
             )
             if probe.returncode == 0:
+                _salmon_debug(f"Resolved uv command: `{normalized}`")
                 return normalized
         except Exception:
             continue
+    _salmon_debug("uv command not detected in PATH/common install locations.")
     return ""
 
 
 def check_smoked_salmon_setup() -> dict:
+    _salmon_debug("Checking smoked-salmon setup.")
     config_path = get_smoked_salmon_config_path()
     missing_tools = [tool for tool in SALMON_REQUIRED_TOOLS if not shutil.which(tool)]
     uv_bin = resolve_uv_command()
     salmon_cmd = resolve_smoked_salmon_command()
 
-    return {
+    result = {
         "config_path": config_path,
         "config_exists": os.path.exists(config_path),
         "has_uv": bool(uv_bin),
@@ -218,6 +255,11 @@ def check_smoked_salmon_setup() -> dict:
         "missing_required_tools": missing_tools,
         "ready": bool(salmon_cmd) and not missing_tools,
     }
+    _salmon_debug(
+        f"Setup check complete. config_exists={result['config_exists']}, "
+        f"has_salmon={result['has_salmon']}, missing_tools={len(missing_tools)}."
+    )
+    return result
 
 
 def _detect_linux_distro() -> str:
@@ -238,6 +280,7 @@ def _detect_linux_distro() -> str:
 
 
 def find_smoked_salmon_default_config_template_path() -> str:
+    _salmon_debug("Searching for smoked-salmon default config template path.")
     # Prefer canonical source-tree location requested by user:
     # src/salmon/data/config.default.toml
     candidates = [
@@ -266,13 +309,17 @@ def find_smoked_salmon_default_config_template_path() -> str:
             continue
         seen.add(normalized)
         if os.path.isfile(normalized):
+            _salmon_debug(f"Found smoked-salmon config template at `{normalized}`.")
             return normalized
+    _salmon_debug("No smoked-salmon default config template found.")
     return ""
 
 
 def bootstrap_smoked_salmon_default_config(config_path: str) -> tuple[bool, str]:
+    _salmon_debug(f"Bootstrapping smoked-salmon default config at `{config_path}`.")
     salmon_cmd = resolve_smoked_salmon_command()
     if not salmon_cmd:
+        _salmon_debug("Bootstrap aborted: smoked-salmon command not found.")
         return False, "smoked-salmon command not found."
 
     config_dir = os.path.dirname(os.path.abspath(config_path))
@@ -282,6 +329,7 @@ def bootstrap_smoked_salmon_default_config(config_path: str) -> tuple[bool, str]
     # If default already exists, use it.
     if os.path.exists(default_config_path) and not os.path.exists(config_path):
         shutil.copyfile(default_config_path, config_path)
+        _salmon_debug("Bootstrap reused existing config.default.toml.")
         _ok_dir, dir_msg = ensure_smoked_salmon_directory_settings(config_path)
         suffix = f" {dir_msg}" if dir_msg else ""
         return True, f"Created `{config_path}` from existing `{default_config_path}`.{suffix}"
@@ -301,23 +349,29 @@ def bootstrap_smoked_salmon_default_config(config_path: str) -> tuple[bool, str]
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait()
+            _salmon_debug(f"Bootstrap timed out after {timeout_seconds}s; process killed.")
     except Exception:
+        _salmon_debug("Bootstrap failed to run smoked-salmon command.")
         return False, "Failed to run smoked-salmon bootstrap command."
 
     if os.path.exists(default_config_path) and not os.path.exists(config_path):
         try:
             shutil.copyfile(default_config_path, config_path)
+            _salmon_debug("Bootstrap generated config.default.toml and copied config.toml.")
             _ok_dir, dir_msg = ensure_smoked_salmon_directory_settings(config_path)
             suffix = f" {dir_msg}" if dir_msg else ""
             return True, f"Generated `{default_config_path}` and created `{config_path}`.{suffix}"
         except Exception:
+            _salmon_debug("Bootstrap generated default config but copy to config.toml failed.")
             return False, f"Generated `{default_config_path}` but failed to copy to `{config_path}`."
 
     if os.path.exists(config_path):
+        _salmon_debug("Bootstrap detected config.toml created directly by smoked-salmon.")
         _ok_dir, dir_msg = ensure_smoked_salmon_directory_settings(config_path)
         suffix = f" {dir_msg}" if dir_msg else ""
         return True, f"smoked-salmon created `{config_path}`.{suffix}"
 
+    _salmon_debug("Bootstrap completed without generating expected config files.")
     return False, "smoked-salmon did not generate config files."
 
 
@@ -362,14 +416,17 @@ def get_missing_tool_install_hints(missing_tools: List[str]) -> dict:
 
 
 def ensure_smoked_salmon_directory_settings(config_path: str) -> tuple[bool, str]:
+    _salmon_debug(f"Ensuring smoked-salmon directory settings in `{config_path}`.")
     target_path = os.path.abspath(os.path.expanduser(config_path))
     if not os.path.exists(target_path):
+        _salmon_debug("Directory setting normalization skipped; config path does not exist.")
         return False, ""
 
     try:
         with open(target_path, "r", encoding="utf-8") as f:
             text = f.read()
     except Exception as e:
+        _salmon_debug(f"Could not read config for directory normalization: {e}")
         return False, f"Could not read config to normalize directories: {e}"
 
     home_root = _get_writable_smoked_salmon_root(config_path)
@@ -432,12 +489,18 @@ def ensure_smoked_salmon_directory_settings(config_path: str) -> tuple[bool, str
             try:
                 os.makedirs(fallback_path, exist_ok=True)
             except Exception as fallback_error:
+                _salmon_debug(
+                    f"Could not create `{key}` at `{path}` and fallback `{fallback_path}` failed: {fallback_error}"
+                )
                 return False, (
                     f"Could not create `{key}` directory at `{path}`: {e}. "
                     f"Fallback failed at `{fallback_path}`: {fallback_error}"
                 )
             resolved_paths[key] = fallback_path
             modified = True
+            _salmon_debug(
+                f"Directory `{key}` fallback applied. requested=`{path}`, fallback=`{fallback_path}`."
+            )
 
     if modified:
         try:
@@ -446,7 +509,9 @@ def ensure_smoked_salmon_directory_settings(config_path: str) -> tuple[bool, str
             with open(target_path, "w", encoding="utf-8") as f:
                 f.write(updated_text)
         except Exception as e:
+            _salmon_debug(f"Failed writing normalized directory settings: {e}")
             return False, f"Could not write normalized directory settings: {e}"
+        _salmon_debug("Directory settings updated in config file.")
 
     return (
         True,
@@ -470,11 +535,14 @@ def _get_writable_smoked_salmon_root(config_path: str) -> str:
         try:
             os.makedirs(normalized, exist_ok=True)
             if _is_directory_writable(normalized):
+                _salmon_debug(f"Writable smoked-salmon root detected: `{normalized}`.")
                 return normalized
         except Exception:
             continue
     # Last-resort fallback (caller may still fail later on mkdir)
-    return os.path.abspath(os.path.join("exports", "smoked-salmon"))
+    fallback = os.path.abspath(os.path.join("exports", "smoked-salmon"))
+    _salmon_debug(f"Using fallback smoked-salmon writable root: `{fallback}`.")
+    return fallback
 
 
 def _is_directory_writable(path: str) -> bool:
@@ -514,15 +582,19 @@ def _set_directory_key_value(config_text: str, key: str, value: str) -> str:
 def install_smoked_salmon_with_uv(
     progress_callback: Optional[Callable[[str, str], None]] = None,
 ) -> tuple[bool, str, str]:
+    _salmon_debug("Installing smoked-salmon with uv.")
     log_path = os.path.abspath(os.path.join("exports", "smoked_salmon_install_last.log"))
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     uv_bin = resolve_uv_command()
     if not uv_bin:
+        _salmon_debug("uv missing; attempting uv installer before smoked-salmon install.")
         uv_ok, uv_msg, uv_log_path = install_uv_tool(progress_callback=progress_callback)
         if not uv_ok:
+            _salmon_debug(f"uv install failed: {uv_msg}")
             return False, f"{uv_msg} (see: {uv_log_path})", log_path
         uv_bin = resolve_uv_command()
         if not uv_bin:
+            _salmon_debug("uv install reported success but uv command still unresolved.")
             return False, "uv install reported success, but `uv` is still not detected.", log_path
 
     cmd = [uv_bin, "tool", "install", "git+https://github.com/smokin-salmon/smoked-salmon"]
@@ -564,6 +636,7 @@ def install_smoked_salmon_with_uv(
             log.write(f"[timeout] {datetime.now(timezone.utc).isoformat()}\n")
         if progress_callback:
             progress_callback(log_path, _read_log_tail(log_path))
+        _salmon_debug(f"smoked-salmon install timed out after {timeout_seconds}s.")
         return False, f"Install timed out after {timeout_seconds}s.", log_path
 
     with open(log_path, "a", encoding="utf-8") as log:
@@ -572,17 +645,21 @@ def install_smoked_salmon_with_uv(
         progress_callback(log_path, _read_log_tail(log_path))
 
     if result_code != 0:
+        _salmon_debug(f"smoked-salmon install failed with exit code {result_code}.")
         return False, f"`uv tool install ...` failed with exit code {result_code}.", log_path
 
     check = check_smoked_salmon_setup()
     if check.get("has_salmon"):
+        _salmon_debug("smoked-salmon install completed successfully and command is now detected.")
         return True, "smoked-salmon installed successfully.", log_path
+    _salmon_debug("Install command completed but salmon command is still not detected.")
     return False, "Install command finished, but `salmon` is still not detected in PATH.", log_path
 
 
 def install_uv_tool(
     progress_callback: Optional[Callable[[str, str], None]] = None,
 ) -> tuple[bool, str, str]:
+    _salmon_debug("Installing uv tool.")
     log_path = os.path.abspath(os.path.join("exports", "uv_install_last.log"))
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     timeout_seconds = 900
@@ -634,6 +711,7 @@ def install_uv_tool(
             log.write(f"[timeout] {datetime.now(timezone.utc).isoformat()}\n")
         if progress_callback:
             progress_callback(log_path, _read_log_tail(log_path))
+        _salmon_debug(f"uv install timed out after {timeout_seconds}s.")
         return False, f"uv install timed out after {timeout_seconds}s.", log_path
 
     with open(log_path, "a", encoding="utf-8") as log:
@@ -642,11 +720,14 @@ def install_uv_tool(
         progress_callback(log_path, _read_log_tail(log_path))
 
     if result_code != 0:
+        _salmon_debug(f"uv install failed with exit code {result_code}.")
         return False, f"uv install failed with exit code {result_code}.", log_path
 
     detected_uv = resolve_uv_command()
     if detected_uv:
+        _salmon_debug(f"uv install succeeded and detected binary `{detected_uv}`.")
         return True, f"uv installed successfully (`{detected_uv}`).", log_path
+    _salmon_debug("uv install completed but uv command still unresolved.")
     return False, "uv install finished, but `uv` is still not detected in PATH/common locations.", log_path
 
 
@@ -661,6 +742,10 @@ def run_smoked_salmon_uploads(
     env_overrides: Optional[Dict[str, str]] = None,
     progress_callback: Optional[Callable[[str, str], None]] = None,
 ) -> tuple[int, int, List[str], str]:
+    _salmon_debug(
+        f"run_smoked_salmon_uploads() called with {len(album_paths)} album path(s), "
+        f"source={source}, extra_args_present={bool(extra_args.strip())}."
+    )
     base_cmd = resolve_smoked_salmon_command()
     log_path = os.path.abspath(os.path.join("exports", "smoked_salmon_last.log"))
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -669,6 +754,7 @@ def run_smoked_salmon_uploads(
     try:
         extra_tokens = shlex.split(extra_args) if extra_args.strip() else []
     except ValueError as e:
+        _salmon_debug(f"Invalid extra CLI args for smoked-salmon upload run: {e}")
         return 0, 0, [f"Invalid additional CLI args: {e}"], log_path
 
     with open(log_path, "w", encoding="utf-8") as log:
@@ -681,6 +767,7 @@ def run_smoked_salmon_uploads(
         progress_callback(log_path, _read_log_tail(log_path))
 
     if not base_cmd:
+        _salmon_debug("Upload run aborted: smoked-salmon command not found.")
         return 0, 0, [
             "smoked-salmon command not found.",
             "Install with: uv tool install git+https://github.com/smokin-salmon/smoked-salmon",
@@ -752,12 +839,14 @@ def run_smoked_salmon_uploads(
         if not target:
             continue
         if not os.path.isdir(target):
+            _salmon_debug(f"Album path missing for upload run: `{target}`.")
             failures.append(f"{target}: folder not found")
             with open(log_path, "a", encoding="utf-8") as log:
                 log.write(f"[missing] {datetime.now(timezone.utc).isoformat()} :: {target}\n")
             continue
 
         attempted += 1
+        _salmon_debug(f"Starting smoked-salmon upload for `{target}`.")
         cmd = [*base_cmd, "up", target, "-s", source_arg, *extra_tokens]
         log_offset_before = 0
         with open(log_path, "a", encoding="utf-8") as log:
@@ -844,6 +933,10 @@ def run_smoked_salmon_uploads(
                             if process is not None:
                                 process.kill()
                                 process.wait()
+                            _salmon_debug(
+                                f"Upload aborted due to unhandled prompt for `{target}`: "
+                                f"`{unhandled_prompt_line}`."
+                            )
                             with open(log_path, "a", encoding="utf-8") as log:
                                 log.write(
                                     f"[unhandled-prompt] {datetime.now(timezone.utc).isoformat()} :: "
@@ -862,6 +955,7 @@ def run_smoked_salmon_uploads(
             if process is not None:
                 process.kill()
                 process.wait()
+            _salmon_debug(f"Upload timed out after {timeout_seconds}s for `{target}`.")
             with open(log_path, "a", encoding="utf-8") as log:
                 log.write(
                     f"[timeout] {datetime.now(timezone.utc).isoformat()} :: {' '.join(cmd)}\n\n"
@@ -889,13 +983,16 @@ def run_smoked_salmon_uploads(
             pass
         elif result_code == 0 and not aborted_upload:
             success_count += 1
+            _salmon_debug(f"Upload succeeded for `{target}`.")
         else:
             if aborted_upload:
+                _salmon_debug(f"Upload aborted by smoked-salmon interactive prompt for `{target}`.")
                 failures.append(
                     f"{target}: upload aborted by smoked-salmon prompt "
                     "(try setting additional args to disable interactive checks)."
                 )
             else:
+                _salmon_debug(f"Upload failed with exit code {result_code} for `{target}`.")
                 failures.append(f"{target}: exit code {result_code}")
 
     with open(log_path, "a", encoding="utf-8") as log:
@@ -906,6 +1003,10 @@ def run_smoked_salmon_uploads(
     if progress_callback:
         progress_callback(log_path, _read_log_tail(log_path))
 
+    _salmon_debug(
+        f"run_smoked_salmon_uploads() finished: attempted={attempted}, "
+        f"succeeded={success_count}, failures={len(failures)}."
+    )
     return success_count, attempted, failures, log_path
 
 
@@ -913,11 +1014,13 @@ def run_smoked_salmon_command(
     command: str,
     progress_callback: Optional[Callable[[str, str], None]] = None,
 ) -> tuple[bool, str, str]:
+    _salmon_debug(f"run_smoked_salmon_command() called with command=`{command}`.")
     base_cmd = resolve_smoked_salmon_command()
     log_path = os.path.abspath(os.path.join("exports", "smoked_salmon_cmd_last.log"))
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     command = command.strip().lower()
     if command not in {"health", "checkconf", "migrate"}:
+        _salmon_debug(f"Unsupported smoked-salmon command requested: `{command}`.")
         return False, f"Unsupported command: {command}", log_path
 
     with open(log_path, "w", encoding="utf-8") as log:
@@ -928,6 +1031,7 @@ def run_smoked_salmon_command(
         progress_callback(log_path, _read_log_tail(log_path))
 
     if not base_cmd:
+        _salmon_debug("Cannot run smoked-salmon command; binary not resolved.")
         return False, "smoked-salmon command not found.", log_path
 
     cmd = [*base_cmd, command]
@@ -964,6 +1068,7 @@ def run_smoked_salmon_command(
             log.write(f"[timeout] {datetime.now(timezone.utc).isoformat()}\n")
         if progress_callback:
             progress_callback(log_path, _read_log_tail(log_path))
+        _salmon_debug(f"`salmon {command}` timed out after {timeout_seconds}s.")
         return False, f"`salmon {command}` timed out after {timeout_seconds}s.", log_path
 
     with open(log_path, "a", encoding="utf-8") as log:
@@ -972,7 +1077,9 @@ def run_smoked_salmon_command(
         progress_callback(log_path, _read_log_tail(log_path))
 
     if result_code == 0:
+        _salmon_debug(f"`salmon {command}` completed successfully.")
         return True, f"`salmon {command}` completed successfully.", log_path
+    _salmon_debug(f"`salmon {command}` failed with exit code {result_code}.")
     return False, f"`salmon {command}` failed with exit code {result_code}.", log_path
 
 
@@ -984,4 +1091,3 @@ def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:
         return text[-max_chars:]
     except Exception:
         return ""
-

@@ -1,14 +1,21 @@
 import asyncio
 import os
+import sys
+from datetime import datetime, timezone
 from io import StringIO
 
 import pandas as pd
 import streamlit as st
 from dotenv import load_dotenv
 
+from app_modules.debug_logging import emit_debug
 from app_modules.filtering import build_filtered_entries, get_download_link
 from app_modules.matching import process_batch
 from app_modules.streamrip import export_qobuz_batches, run_streamrip_batches
+
+
+def _ui_processing_debug(message: str) -> None:
+    emit_debug("ui processing", message)
 
 
 def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:
@@ -30,8 +37,10 @@ def handle_process_submission(
 ) -> None:
     if not process_btn:
         return
+    _ui_processing_debug("Process submission triggered.")
 
     if uploaded_file is None:
+        _ui_processing_debug("Process blocked: no file uploaded.")
         st.session_state.auto_scroll_alerts_once = True
         st.error("Please upload a .txt or .log file first.")
         return
@@ -49,12 +58,17 @@ def handle_process_submission(
     stringio = StringIO(uploaded_file.getvalue().decode("utf-8", errors="ignore"))
     lines = stringio.readlines()
     filtered_entries = build_filtered_entries(lines, filter_config, start_date, end_date)
+    _ui_processing_debug(
+        f"Loaded {len(lines)} line(s); filtered down to {len(filtered_entries)} unique entry(ies). "
+        f"dry_run={dry_run}"
+    )
 
     st.session_state.status_log = (
         f"Found {len(filtered_entries)} unique URLs matching your filters out of {len(lines)} total lines."
     )
 
     if not filtered_entries:
+        _ui_processing_debug("No entries matched filters; stopping submission flow.")
         st.warning("No URLs matched the filter criteria.")
         return
 
@@ -62,10 +76,12 @@ def handle_process_submission(
         st.session_state.is_dry_run_run = True
         st.session_state.dry_run_results = filtered_entries
         st.session_state.process_complete = True
+        _ui_processing_debug("Dry run mode enabled; stored filtered entries and rerunning UI.")
         st.rerun()
 
     load_dotenv(override=True)
     if not os.getenv("QOBUZ_USER_AUTH_TOKEN"):
+        _ui_processing_debug("Process blocked: QOBUZ_USER_AUTH_TOKEN missing in env.")
         st.session_state.auto_scroll_alerts_once = True
         st.error(
             "QOBUZ_USER_AUTH_TOKEN is missing. Add it in `.env`, then run again, or use Dry Run mode."
@@ -76,12 +92,14 @@ def handle_process_submission(
     st.session_state.total_entries = len(filtered_entries)
     st.session_state.current_index = 0
     st.session_state.processing = True
+    _ui_processing_debug(f"Queued {len(filtered_entries)} entries for async matching run.")
     st.rerun()
 
 
 def run_processing_tick() -> None:
     if not st.session_state.processing:
         return
+    _ui_processing_debug("Processing tick started.")
 
     total = st.session_state.total_entries
     completed = st.session_state.current_index
@@ -98,6 +116,7 @@ def run_processing_tick() -> None:
     )
 
     if st.session_state.cancel_requested:
+        _ui_processing_debug("Cancellation requested; ending processing loop.")
         st.session_state.processing = False
         st.session_state.process_complete = False
         matched_count = len([r for r in st.session_state.results if r["Qobuz Link"]])
@@ -110,6 +129,7 @@ def run_processing_tick() -> None:
         end_idx = min(start_idx + batch_size, total)
 
         if start_idx < total:
+            _ui_processing_debug(f"Processing batch slice {start_idx}:{end_idx} of {total}.")
             st.session_state.status_log = f"Processing {start_idx + 1} to {end_idx} of {total}..."
             status_box.info(st.session_state.status_log)
             batch = st.session_state.pending_entries[start_idx:end_idx]
@@ -127,6 +147,9 @@ def run_processing_tick() -> None:
             batch_rows = asyncio.run(process_batch(batch, progress_callback=_on_batch_progress))
             st.session_state.results.extend(batch_rows)
             st.session_state.current_index = end_idx
+            _ui_processing_debug(
+                f"Batch processed. added_rows={len(batch_rows)}, current_index={st.session_state.current_index}."
+            )
             matched_so_far = len([r for r in st.session_state.results if r.get("Qobuz Link")])
             errors_so_far = len([r for r in st.session_state.results if str(r.get("Status", "")).startswith("⚠️")])
             detail_box.caption(
@@ -134,6 +157,7 @@ def run_processing_tick() -> None:
             )
 
         if st.session_state.current_index >= total:
+            _ui_processing_debug("All pending entries processed; marking run complete.")
             st.session_state.processing = False
             st.session_state.process_complete = True
             matched_count = len([r for r in st.session_state.results if r["Qobuz Link"]])
@@ -149,7 +173,8 @@ def run_processing_tick() -> None:
 
 
 def render_status_log(dry_run: bool) -> None:
-    if st.session_state.status_log:
+    if not dry_run and st.session_state.status_log:
+        _ui_processing_debug("Rendering status log block.")
         st.write("### Status Log")
         st.text(st.session_state.status_log)
 
@@ -194,6 +219,10 @@ def render_results_and_exports(
 
     if not st.session_state.results:
         return
+    _ui_processing_debug(
+        f"Rendering results/exports section. results={len(st.session_state.results)}, "
+        f"auto_rip_after_export={auto_rip_after_export}, streamrip_needs_setup={streamrip_needs_setup}."
+    )
 
     st.markdown("---")
     st.subheader("📊 Results")
@@ -242,11 +271,18 @@ def render_results_and_exports(
             rip_this_run_btn = st.button("Rip This Run's Qobuz Results")
 
     if export_btn or rip_this_run_btn:
+        _ui_processing_debug(
+            f"Export/rip action clicked. export_btn={export_btn}, rip_this_run_btn={rip_this_run_btn}."
+        )
         try:
             valid_urls = [r["Qobuz Link"] for r in st.session_state.results if r["Qobuz Link"]]
             if not valid_urls:
+                _ui_processing_debug("Export/rip action had no matched Qobuz URLs.")
                 st.warning("No matched Qobuz links found in this run.")
             else:
+                _ui_processing_debug(
+                    f"Exporting {len(valid_urls)} URL(s) with max_links={int(max_links)}."
+                )
                 batch_files, total_batches = export_qobuz_batches(valid_urls, int(max_links), rip_quality, rip_codec)
                 st.session_state.export_done = True
 
@@ -258,6 +294,7 @@ def render_results_and_exports(
                 should_run_rip = bool(rip_this_run_btn or (export_btn and auto_rip_after_export))
                 if should_run_rip:
                     if streamrip_needs_setup:
+                        _ui_processing_debug("Auto/manual rip blocked because streamrip setup is incomplete.")
                         st.session_state.streamrip_setup_matcher_expand_once = True
                         st.session_state.streamrip_setup_matcher_scroll_once = True
                         st.session_state.streamrip_setup_attention_message = (
@@ -291,8 +328,19 @@ def render_results_and_exports(
                     _update_live_log(log_path, _read_log_tail(log_path))
                     _update_rip_status(total_urls, total_urls, "Streamrip run finished.")
                     st.session_state.rip_last_log_path = log_path
-                    
                     if failures or skipped or successes:
+                        if failures:
+                            _ui_processing_debug(
+                                f"Streamrip run completed with {len(failures)} failure(s)."
+                            )
+                        if skipped:
+                            _ui_processing_debug(
+                                f"Streamrip run completed with {len(skipped)} skipped URL(s)."
+                            )
+                        if successes:
+                            _ui_processing_debug(
+                                f"Streamrip run completed with {len(successes)} success(es)."
+                            )
                         st.session_state.rip_last_level = "warning" if failures else "success"
                         st.session_state.rip_last_failures = failures
                         st.session_state.rip_last_skipped = skipped
@@ -301,6 +349,7 @@ def render_results_and_exports(
                             f"Auto rip processed {total_urls} URL(s). See results below:"
                         )
                     else:
+                        _ui_processing_debug("Streamrip run completed successfully.")
                         st.session_state.rip_last_level = "success"
                         st.session_state.rip_last_failures = []
                         st.session_state.rip_last_skipped = []
@@ -309,6 +358,7 @@ def render_results_and_exports(
                         )
                 st.rerun()
         except Exception as e:
+            _ui_processing_debug(f"Error during export/rip action: {e}")
             st.session_state.auto_scroll_alerts_once = True
             st.error(f"Error during export/rip: {e}")
 
@@ -328,7 +378,6 @@ def render_results_and_exports(
         _skipped_list = st.session_state.get("rip_last_skipped", [])
         _success_list = st.session_state.get("rip_last_successes", [])
         if _failed_list or _skipped_list or _success_list:
-            import pandas as pd
             if _success_list:
                 st.write("**✅ Newly Downloaded / Loaded**")
                 df_success = pd.DataFrame(_success_list)

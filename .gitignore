@@ -46,3 +46,4 @@ run_rip.bat
 run_rip.sh
 .codex
 exports/*.log
+.debug/

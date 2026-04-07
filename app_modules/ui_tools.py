@@ -1,8 +1,15 @@
 import os
+import sys
+from datetime import datetime, timezone
 
 import streamlit as st
 
+from app_modules.debug_logging import emit_debug
 from app_modules.streamrip import export_qobuz_batches, extract_qobuz_urls, run_streamrip_batches
+
+
+def _ui_tools_debug(message: str) -> None:
+    emit_debug("ui tools", message)
 
 
 def _read_text_upload(uploaded_files) -> list[tuple[str, str]]:
@@ -28,6 +35,10 @@ def render_direct_qobuz_rip_tab(
     streamrip_needs_setup: bool = False,
     locked: bool = False,
 ) -> None:
+    _ui_tools_debug(
+        f"Rendering direct rip tab. locked={locked}, streamrip_needs_setup={streamrip_needs_setup}, "
+        f"rip_quality={rip_quality}, rip_codec={rip_codec}."
+    )
     st.subheader("🔗 Direct Qobuz Rip")
     st.caption("Paste Qobuz links or upload a `.txt/.log` file, then rip directly with streamrip.")
 
@@ -96,6 +107,7 @@ def render_direct_qobuz_rip_tab(
             final_batch_files.append(fname)
 
     direct_urls = all_urls_dedup
+    _ui_tools_debug(f"Parsed {len(direct_urls)} direct Qobuz URL(s) from input.")
     st.caption(f"Detected {len(direct_urls)} unique Qobuz URL(s).")
     if direct_urls:
         st.download_button(
@@ -114,7 +126,9 @@ def render_direct_qobuz_rip_tab(
         disabled=locked or streamrip_needs_setup,
     )
     if rip_direct_btn:
+        _ui_tools_debug("Direct rip button clicked.")
         if streamrip_needs_setup:
+            _ui_tools_debug("Direct rip blocked because streamrip setup is incomplete.")
             st.session_state.streamrip_setup_matcher_expand_once = True
             st.session_state.streamrip_setup_matcher_scroll_once = True
             st.session_state.streamrip_setup_attention_message = (
@@ -122,10 +136,12 @@ def render_direct_qobuz_rip_tab(
             )
             st.rerun()
         if not direct_urls:
+            _ui_tools_debug("Direct rip blocked because no URLs were detected.")
             st.warning("No Qobuz links detected. Paste links or upload a file first.")
         else:
             # We already have our batch files prepared in exports/ and in final_batch_files
             total_batches = len(final_batch_files)
+            _ui_tools_debug(f"Starting direct rip run for {len(direct_urls)} URL(s).")
             st.info(f"Prepared {total_batches} batch file(s) in `/exports/`. Starting streamrip...")
 
             live_log_caption = st.empty()
@@ -154,8 +170,13 @@ def render_direct_qobuz_rip_tab(
             _update_live_log(log_path, _read_log_tail(log_path))
             _update_rip_status(total_urls, total_urls, "Streamrip run finished.")
             st.session_state.direct_rip_last_log_path = log_path
-            
             if failures or skipped or successes:
+                if failures:
+                    _ui_tools_debug(f"Direct rip finished with {len(failures)} failure(s).")
+                if skipped:
+                    _ui_tools_debug(f"Direct rip reported {len(skipped)} skipped URL(s).")
+                if successes:
+                    _ui_tools_debug(f"Direct rip reported {len(successes)} success(es).")
                 st.session_state.direct_rip_last_level = "warning" if failures else "success"
                 st.session_state.direct_rip_last_failures = failures
                 st.session_state.direct_rip_last_skipped = skipped
@@ -164,6 +185,7 @@ def render_direct_qobuz_rip_tab(
                     f"Direct rip processed {total_urls} URL(s). See results below:"
                 )
             else:
+                _ui_tools_debug("Direct rip finished successfully without failures.")
                 st.session_state.direct_rip_last_level = "success"
                 st.session_state.direct_rip_last_failures = []
                 st.session_state.direct_rip_last_skipped = []

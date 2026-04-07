@@ -1,10 +1,19 @@
+import sys
+from datetime import datetime, timezone
 from typing import List
 
+from app_modules.debug_logging import emit_debug
 from logic.bandcamp_filter import filter_entries
 
 
+def _filtering_debug(message: str) -> None:
+    emit_debug("filtering", message)
+
+
 def get_download_link(data_list: List[dict]) -> str:
+    _filtering_debug(f"Building download link text from {len(data_list)} row(s).")
     qobuz_urls = [d["qobuz_url"] for d in data_list if d.get("qobuz_url")]
+    _filtering_debug(f"Extracted {len(qobuz_urls)} qobuz URL(s) for download text.")
     return "\n".join(qobuz_urls)
 
 
@@ -16,6 +25,7 @@ def validate_filters(
     start_date,
     end_date,
 ) -> List[str]:
+    _filtering_debug("Validating filter inputs.")
     errors = []
     if min_tracks is not None and max_tracks is not None and min_tracks > max_tracks:
         errors.append("Min Tracks must be less than or equal to Max Tracks.")
@@ -23,11 +33,17 @@ def validate_filters(
         errors.append("Min Duration must be less than or equal to Max Duration.")
     if start_date and end_date and start_date > end_date:
         errors.append("Start Date must be on or before End Date.")
+    _filtering_debug(f"Filter validation complete with {len(errors)} error(s).")
     return errors
 
 
 def build_filtered_entries(lines: List[str], filter_config: dict, start_date, end_date):
+    _filtering_debug(
+        f"Building filtered entries from {len(lines)} line(s). "
+        f"date_filter_active={bool(start_date or end_date)}"
+    )
     filtered_entries = filter_entries(lines, filter_config)
+    _filtering_debug(f"Base filtering returned {len(filtered_entries)} entry(ies).")
 
     if start_date or end_date:
         date_filtered_entries = []
@@ -41,6 +57,7 @@ def build_filtered_entries(lines: List[str], filter_config: dict, start_date, en
                 date_filtered_entries.append(entry)
 
         filtered_entries = date_filtered_entries
+        _filtering_debug(f"Date filtering reduced entries to {len(filtered_entries)}.")
 
     deduped_entries = []
     seen_urls = set()
@@ -51,4 +68,5 @@ def build_filtered_entries(lines: List[str], filter_config: dict, start_date, en
         seen_urls.add(key)
         deduped_entries.append(entry)
 
+    _filtering_debug(f"Deduped entries count: {len(deduped_entries)}.")
     return deduped_entries

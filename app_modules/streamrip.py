@@ -7,11 +7,12 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
 from dotenv import load_dotenv
+from app_modules.debug_logging import emit_debug
 
 QUALITY_OPTIONS = [0, 1, 2, 3, 4]
 QUALITY_LABELS = {
@@ -31,9 +32,12 @@ _AUTO_DISCOVER_LAST_STATUS = ""
 _AUTO_DISCOVER_STATUS_SEQ = 0
 
 
+def _streamrip_debug(message: str) -> None:
+    emit_debug("streamrip", message)
+
+
 def _bundle_debug(message: str) -> None:
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    print(f"[streamrip bundle debug {timestamp} UTC] {message}", file=sys.stderr, flush=True)
+    _streamrip_debug(f"[bundle] {message}")
 
 
 def _publish_discovery_status(message: str, local_callback: Optional[Callable[[str], None]] = None) -> None:
@@ -96,6 +100,7 @@ def extract_qobuz_urls(raw_text: str) -> List[str]:
 
 
 def get_env_qobuz_values(status_callback=None) -> tuple[str, str]:
+    _streamrip_debug("get_env_qobuz_values() called.")
     if status_callback:
         status_callback("Loading variables from .env...")
     load_dotenv(override=True)
@@ -106,15 +111,20 @@ def get_env_qobuz_values(status_callback=None) -> tuple[str, str]:
     token = os.getenv("QOBUZ_USER_AUTH_TOKEN", "").strip()
 
     if not app_id:
+        _streamrip_debug("QOBUZ_APP_ID missing in environment; starting auto-discovery.")
         if status_callback:
             status_callback("QOBUZ_APP_ID not set. Discovering from play.qobuz.com...")
         app_id = discover_qobuz_app_id(status_callback=status_callback)
     elif status_callback:
         status_callback("Using QOBUZ_APP_ID from .env.")
+        _streamrip_debug("Using QOBUZ_APP_ID from environment.")
 
     if status_callback:
         token_state = "found" if token else "missing"
         status_callback(f"QOBUZ_USER_AUTH_TOKEN {token_state}.")
+    _streamrip_debug(
+        f"Qobuz env values resolved. app_id_present={bool(app_id)}, token_present={bool(token)}"
+    )
     return app_id, token
 
 
@@ -232,7 +242,6 @@ def discover_qobuz_app_id(status_callback=None) -> str:
                 report_every_bytes = 256 * 1024
                 next_report_at = report_every_bytes
                 download_started_at = time.monotonic()
-                _bundle_debug("bundle.js download started.")
                 while True:
                     chunk = response.read(64 * 1024)
                     if not chunk:
@@ -253,22 +262,10 @@ def discover_qobuz_app_id(status_callback=None) -> str:
                                 ,
                                 local_callback=status_callback,
                             )
-                            _bundle_debug(
-                                "Download progress: "
-                                f"{downloaded_bytes:,}/{expected_bytes:,} bytes ({percent:.1f}%), "
-                                f"elapsed={elapsed:.2f}s, speed={speed_bps / (1024 * 1024):.2f} MiB/s{eta_text}"
-                            )
                         else:
                             _publish_discovery_status(
                                 f"Downloading bundle.js... {downloaded_bytes:,} bytes",
                                 local_callback=status_callback,
-                            )
-                            elapsed = max(0.001, time.monotonic() - download_started_at)
-                            speed_bps = downloaded_bytes / elapsed
-                            _bundle_debug(
-                                "Download progress: "
-                                f"{downloaded_bytes:,} bytes, elapsed={elapsed:.2f}s, "
-                                f"speed={speed_bps / (1024 * 1024):.2f} MiB/s"
                             )
                         next_report_at += report_every_bytes
 
@@ -328,24 +325,33 @@ def discover_qobuz_app_id(status_callback=None) -> str:
 
 
 def get_streamrip_config_path() -> str:
+    _streamrip_debug("Resolving streamrip config path.")
     try:
         from streamrip.config import DEFAULT_CONFIG_PATH  # type: ignore
 
-        return str(DEFAULT_CONFIG_PATH)
+        resolved = str(DEFAULT_CONFIG_PATH)
+        _streamrip_debug(f"Using streamrip DEFAULT_CONFIG_PATH: `{resolved}`")
+        return resolved
     except Exception:
         if os.name == "nt":
             appdata = os.getenv("APPDATA") or os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
-            return os.path.join(appdata, "streamrip", "config.toml")
+            resolved = os.path.join(appdata, "streamrip", "config.toml")
+            _streamrip_debug(f"Using Windows fallback config path: `{resolved}`")
+            return resolved
         if sys.platform == "darwin":
-            return os.path.join(
+            resolved = os.path.join(
                 os.path.expanduser("~"),
                 "Library",
                 "Application Support",
                 "streamrip",
                 "config.toml",
             )
+            _streamrip_debug(f"Using macOS fallback config path: `{resolved}`")
+            return resolved
         config_home = os.getenv("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-        return os.path.join(config_home, "streamrip", "config.toml")
+        resolved = os.path.join(config_home, "streamrip", "config.toml")
+        _streamrip_debug(f"Using Linux fallback config path: `{resolved}`")
+        return resolved
 
 
 
@@ -353,13 +359,20 @@ def get_streamrip_config_path() -> str:
 
 def get_streamrip_database_defaults(config_path: str) -> tuple[str, str]:
     config_dir = os.path.dirname(os.path.abspath(os.path.expanduser(config_path)))
-    return os.path.join(config_dir, "downloads.db"), os.path.join(config_dir, "failed")
+    downloads_db = os.path.join(config_dir, "downloads.db")
+    failed_dir = os.path.join(config_dir, "failed")
+    _streamrip_debug(
+        f"Database defaults resolved for `{config_path}` -> db=`{downloads_db}`, failed=`{failed_dir}`"
+    )
+    return downloads_db, failed_dir
 
 
 
 
 def ensure_streamrip_config_file(config_path: str) -> tuple[bool, str]:
+    _streamrip_debug(f"Ensuring streamrip config file exists at `{config_path}`.")
     if os.path.exists(config_path):
+        _streamrip_debug("Config file already exists; no initialization required.")
         return True, ""
 
     try:
@@ -367,13 +380,17 @@ def ensure_streamrip_config_file(config_path: str) -> tuple[bool, str]:
 
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
         shutil.copyfile(str(BLANK_CONFIG_PATH), config_path)
+        _streamrip_debug(f"Created streamrip config from BLANK_CONFIG_PATH at `{config_path}`.")
         return True, f"Created streamrip config at `{config_path}`."
     except Exception as e:
+        _streamrip_debug(f"Failed to initialize streamrip config: {e}")
         return False, f"Could not initialize streamrip config: {e}"
 
 
 def load_streamrip_settings(config_path: str) -> tuple[dict, str]:
+    _streamrip_debug(f"Loading streamrip settings from `{config_path}`.")
     if not os.path.exists(config_path):
+        _streamrip_debug("Streamrip config file missing while loading settings.")
         return {}, "Streamrip config file not found."
 
     try:
@@ -392,10 +409,14 @@ def load_streamrip_settings(config_path: str) -> tuple[dict, str]:
         db_cfg = None
         if hasattr(config.file, "database"):
             db_cfg = config.file.database
-        elif hasattr(config.file, "session") and hasattr(config.file.session, "database"):
-            db_cfg = config.file.session.database
-        elif hasattr(config, "session") and hasattr(config.session, "database"):
-            db_cfg = config.session.database
+        else:
+            file_session: Any = getattr(config.file, "session", None)
+            if file_session is not None and hasattr(file_session, "database"):
+                db_cfg = file_session.database
+            else:
+                config_session: Any = getattr(config, "session", None)
+                if config_session is not None and hasattr(config_session, "database"):
+                    db_cfg = config_session.database
 
         if db_cfg:
             configured_db_path = str(getattr(db_cfg, "downloads_path", "") or "").strip()
@@ -413,8 +434,7 @@ def load_streamrip_settings(config_path: str) -> tuple[dict, str]:
         downloads_folder = str(config.file.downloads.folder or "").strip()
         if not downloads_folder:
             downloads_folder = get_default_downloads_folder()
-
-        return {
+        settings = {
             "use_auth_token": bool(qobuz.use_auth_token),
             "email_or_userid": qobuz.email_or_userid or "",
             "password_or_token": qobuz.password_or_token or "",
@@ -424,8 +444,16 @@ def load_streamrip_settings(config_path: str) -> tuple[dict, str]:
             "downloads_folder": downloads_folder,
             "downloads_db_path": downloads_db_path,
             "failed_downloads_path": failed_downloads_path,
-        }, ""
+        }
+        _streamrip_debug(
+            "Loaded streamrip settings "
+            f"(use_auth_token={settings['use_auth_token']}, "
+            f"quality={settings['quality']}, codec={settings['codec_selection']}, "
+            f"downloads_folder_set={bool(settings['downloads_folder'])})."
+        )
+        return settings, ""
     except Exception as e:
+        _streamrip_debug(f"Could not read streamrip config: {e}")
         return {}, f"Could not read streamrip config: {e}"
 
 
@@ -441,6 +469,7 @@ def save_streamrip_settings(
     downloads_db_path: str = "",
     failed_downloads_path: str = "",
 ) -> tuple[bool, str]:
+    _streamrip_debug(f"Saving streamrip settings to `{config_path}`.")
     try:
         from streamrip.config import Config  # type: ignore
 
@@ -459,6 +488,10 @@ def save_streamrip_settings(
         )
         os.makedirs(os.path.dirname(selected_downloads_db_path), exist_ok=True)
         os.makedirs(selected_failed_downloads_path, exist_ok=True)
+        _streamrip_debug(
+            "Prepared streamrip data paths: "
+            f"downloads_db=`{selected_downloads_db_path}`, failed=`{selected_failed_downloads_path}`"
+        )
 
         file_data.qobuz.use_auth_token = bool(use_auth_token)
         file_data.qobuz.email_or_userid = email_or_userid.strip()
@@ -483,10 +516,12 @@ def save_streamrip_settings(
         db_targets = []
         if hasattr(file_data, "database"):
             db_targets.append(file_data.database)
-        if hasattr(file_data, "session") and hasattr(file_data.session, "database"):
-            db_targets.append(file_data.session.database)
-        if hasattr(config, "session") and hasattr(config.session, "database"):
-            db_targets.append(config.session.database)
+        file_session: Any = getattr(file_data, "session", None)
+        if file_session is not None and hasattr(file_session, "database"):
+            db_targets.append(file_session.database)
+        config_session: Any = getattr(config, "session", None)
+        if config_session is not None and hasattr(config_session, "database"):
+            db_targets.append(config_session.database)
 
         # Ensure we set at least one database target
         for db_target in db_targets:
@@ -499,29 +534,39 @@ def save_streamrip_settings(
 
         file_data.set_modified()
         config.save_file()
+        _streamrip_debug("Streamrip config saved successfully.")
         return True, "Streamrip config updated."
     except Exception as e:
+        _streamrip_debug(f"Failed saving streamrip settings: {e}")
         return False, f"Could not save streamrip config: {e}"
 
 
 def read_streamrip_config_text(config_path: str, show_secrets: bool = False) -> str:
+    _streamrip_debug(
+        f"Reading raw streamrip config text from `{config_path}` (show_secrets={show_secrets})."
+    )
     if not os.path.exists(config_path):
+        _streamrip_debug("Raw config read requested, but config file was not found.")
         return "Config file not found."
 
     with open(config_path, "r", encoding="utf-8") as f:
         text = f.read()
 
     if show_secrets:
+        _streamrip_debug("Returning raw config with secrets visible.")
         return text
 
     text = re.sub(r'(password_or_token\s*=\s*)".*?"', r'\1"***"', text)
+    _streamrip_debug("Returning masked raw config text.")
     return text
 
 
 def fetch_qobuz_user_identifier(app_id: str, user_token: str) -> tuple[bool, dict, str]:
+    _streamrip_debug("fetch_qobuz_user_identifier() called.")
     app_id = app_id.strip()
     user_token = user_token.strip()
     if not app_id or not user_token:
+        _streamrip_debug("Cannot fetch identifier; app ID or token missing.")
         return False, {}, "Need both Qobuz App ID and user auth token."
 
     url = "https://www.qobuz.com/api.json/0.2/user/login"
@@ -542,16 +587,20 @@ def fetch_qobuz_user_identifier(app_id: str, user_token: str) -> tuple[bool, dic
             body = response.read().decode("utf-8", errors="replace")
     except urlerror.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
+        _streamrip_debug(f"Qobuz identifier lookup HTTP error: {e.code}")
         return False, {}, f"Qobuz lookup failed with HTTP {e.code}: {body[:180]}"
     except Exception as e:
+        _streamrip_debug(f"Qobuz identifier lookup request failed: {e}")
         return False, {}, f"Qobuz lookup failed: {e}"
 
     if status != 200:
+        _streamrip_debug(f"Qobuz identifier lookup returned non-200 status: {status}")
         return False, {}, f"Qobuz lookup failed with HTTP {status}: {body[:180]}"
 
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
+        _streamrip_debug("Qobuz identifier lookup returned non-JSON body.")
         return False, {}, "Qobuz response was not valid JSON."
 
     user = data.get("user", {}) if isinstance(data, dict) else {}
@@ -567,8 +616,12 @@ def fetch_qobuz_user_identifier(app_id: str, user_token: str) -> tuple[bool, dic
             break
 
     if not identifier:
+        _streamrip_debug("Qobuz identifier lookup succeeded but no identifier found in payload.")
         return False, {}, "Could not find user identifier in Qobuz response."
 
+    _streamrip_debug(
+        f"Fetched Qobuz identifier successfully (identifier=`{identifier}`, email_present={bool(email)})."
+    )
     return True, {
         "identifier": identifier,
         "email": str(email).strip(),
@@ -578,8 +631,10 @@ def fetch_qobuz_user_identifier(app_id: str, user_token: str) -> tuple[bool, dic
 
 
 def resolve_streamrip_command() -> List[str]:
+    _streamrip_debug("Resolving streamrip command.")
     rip_bin = shutil.which("rip")
     if rip_bin:
+        _streamrip_debug(f"Using rip binary from PATH: `{rip_bin}`")
         return [rip_bin]
 
     probe = subprocess.run(
@@ -588,7 +643,9 @@ def resolve_streamrip_command() -> List[str]:
         text=True,
     )
     if probe.returncode == 0:
+        _streamrip_debug("Using python -m streamrip fallback command.")
         return [sys.executable, "-m", "streamrip"]
+    _streamrip_debug("Could not resolve streamrip command.")
     return []
 
 
@@ -600,6 +657,10 @@ def run_streamrip_batches(
     progress_callback: Optional[Callable[[str, str], None]] = None,
     status_callback: Optional[Callable[[int, int, str], None]] = None,
 ) -> tuple[int, int, List[dict], List[dict], List[dict], str]:
+    _streamrip_debug(
+        f"run_streamrip_batches() called with {len(batch_files)} batch file(s), "
+        f"quality={rip_quality}, codec={codec_selection}."
+    )
     base_cmd = resolve_streamrip_command()
     log_path = os.path.abspath(os.path.join("exports", "streamrip_last.log"))
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -644,6 +705,7 @@ def run_streamrip_batches(
     batch_urls: List[tuple[str, List[str]]] = []
     for fname in batch_files:
         rel_path = os.path.join("exports", fname)
+        _streamrip_debug(f"Loading batch file `{rel_path}`.")
         try:
             with open(rel_path, "r", encoding="utf-8") as f:
                 urls = [line.strip() for line in f if line.strip()]
@@ -661,6 +723,7 @@ def run_streamrip_batches(
 
         total_urls += len(urls)
         batch_urls.append((fname, urls))
+    _streamrip_debug(f"Prepared {len(batch_urls)} non-empty batch file(s), total_urls={total_urls}.")
 
     if status_callback:
         status_callback(0, total_urls, f"Preparing streamrip run for {total_urls} URL(s)...")
@@ -668,6 +731,7 @@ def run_streamrip_batches(
     processed_urls = 0
     for fname, urls in batch_urls:
         file_failed = False
+        _streamrip_debug(f"Processing batch `{fname}` with {len(urls)} URL(s).")
         for url in urls:
             if status_callback:
                 status_callback(
@@ -709,6 +773,9 @@ def run_streamrip_batches(
                 if process is not None:
                     process.kill()
                     process.wait()
+                _streamrip_debug(
+                    f"URL timed out after {streamrip_timeout_seconds}s: batch=`{fname}`, url=`{url}`."
+                )
                 with open(log_path, "a", encoding="utf-8") as log:
                     log.write(
                         f"[timeout] {datetime.now(timezone.utc).isoformat()} :: {' '.join(cmd)}\n\n"
@@ -771,6 +838,7 @@ def run_streamrip_batches(
 
         if not file_failed:
             success_count += 1
+            _streamrip_debug(f"Batch `{fname}` completed without URL failures.")
 
     with open(log_path, "a", encoding="utf-8") as log:
         log.write(
@@ -785,6 +853,10 @@ def run_streamrip_batches(
         else:
             status_callback(total_urls, total_urls, "Finished successfully.")
 
+    _streamrip_debug(
+        f"run_streamrip_batches() finished: success_batches={success_count}, "
+        f"total_urls={total_urls}, failures={len(failures)}, skipped={len(skipped)}, successes={len(successes)}."
+    )
     return success_count, total_urls, failures, skipped, successes, log_path
 
 
@@ -799,16 +871,24 @@ def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:
 
 def list_export_batch_files() -> List[str]:
     export_dir = os.path.abspath("exports")
+    _streamrip_debug(f"Listing export batch files in `{export_dir}`.")
     if not os.path.isdir(export_dir):
+        _streamrip_debug("Export directory missing; no batch files found.")
         return []
-    return sorted(
+    files = sorted(
         f
         for f in os.listdir(export_dir)
         if f.startswith("qobuz_batch_") and f.endswith(".txt")
     )
+    _streamrip_debug(f"Found {len(files)} export batch file(s).")
+    return files
 
 
 def export_qobuz_batches(valid_urls: List[str], max_links: int, rip_quality: int, rip_codec: str) -> tuple[List[str], int]:
+    _streamrip_debug(
+        f"export_qobuz_batches() called with {len(valid_urls)} URL(s), max_links={max_links}, "
+        f"quality={rip_quality}, codec={rip_codec}."
+    )
     export_dir = os.path.abspath("exports")
     os.makedirs(export_dir, exist_ok=True)
 
@@ -825,6 +905,7 @@ def export_qobuz_batches(valid_urls: List[str], max_links: int, rip_quality: int
             f.write("\n".join(batch_urls) + "\n")
 
         batch_files.append(filename)
+    _streamrip_debug(f"Wrote {len(batch_files)} streamrip batch file(s) to `{export_dir}`.")
 
     bat_path = os.path.abspath("run_rip.bat")
     with open(bat_path, "w", encoding="utf-8") as f:
@@ -885,4 +966,8 @@ def export_qobuz_batches(valid_urls: List[str], max_links: int, rip_quality: int
     except Exception:
         pass
 
+    _streamrip_debug(
+        f"Export artifacts generated: run scripts at `{bat_path}` and `{sh_path}` "
+        f"for {total_batches} batch(es)."
+    )
     return batch_files, total_batches

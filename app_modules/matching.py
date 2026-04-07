@@ -1,10 +1,17 @@
 import asyncio
 import os
+import sys
+from datetime import datetime, timezone
 
 import aiohttp
 
+from app_modules.debug_logging import emit_debug
 from logic.metadata_scraper import HostRateLimiter, scrape_bandcamp_metadata
 from logic.qobuz_matcher import match_album
+
+
+def _matching_debug(message: str) -> None:
+    emit_debug("matching", message)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -33,9 +40,11 @@ async def process_single_entry(
     rate_limiter: HostRateLimiter,
     semaphore: asyncio.Semaphore,
 ):
+    _matching_debug(f"Processing single entry: `{entry.url}`")
     async with semaphore:
         bc_data = await scrape_bandcamp_metadata(entry.url, session, rate_limiter=rate_limiter)
     if bc_data.get("status") != "success":
+        _matching_debug(f"Bandcamp scrape failed for `{entry.url}`.")
         return {
             "Artist": entry.artist,
             "Album": entry.title,
@@ -46,6 +55,7 @@ async def process_single_entry(
 
     match_data = await match_album(session, bc_data)
     if match_data.get("status") == "matched":
+        _matching_debug(f"Match found for `{entry.url}`.")
         return {
             "Artist": bc_data.get("artist"),
             "Album": bc_data.get("album"),
@@ -54,6 +64,7 @@ async def process_single_entry(
             "Status": "✅ Matched",
         }
 
+    _matching_debug(f"No Qobuz match for `{entry.url}`.")
     return {
         "Artist": bc_data.get("artist"),
         "Album": bc_data.get("album"),
@@ -64,8 +75,12 @@ async def process_single_entry(
 
 
 async def process_batch(entries, progress_callback=None):
+    _matching_debug(f"process_batch() called with {len(entries)} entry(ies).")
     concurrency = _env_int("BANDCAMP_CONCURRENCY", 2)
     min_interval_seconds = _env_float("BANDCAMP_MIN_INTERVAL_SECONDS", 1.0)
+    _matching_debug(
+        f"Matching runtime config: concurrency={concurrency}, min_interval_seconds={min_interval_seconds}."
+    )
     semaphore = asyncio.Semaphore(concurrency)
     rate_limiter = HostRateLimiter(min_interval_seconds=min_interval_seconds)
     connector = aiohttp.TCPConnector(limit=max(concurrency * 2, 4), limit_per_host=concurrency)
@@ -89,4 +104,5 @@ async def process_batch(entries, progress_callback=None):
             done += 1
             if progress_callback:
                 progress_callback(done, total, row)
+        _matching_debug(f"process_batch() completed: processed={done}, total={total}.")
         return rows
