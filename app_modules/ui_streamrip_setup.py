@@ -11,6 +11,7 @@ from app_modules.streamrip import (
     format_quality_option,
     get_streamrip_config_path,
     get_streamrip_database_defaults,
+    is_streamrip_installed,
     read_streamrip_config_text,
     save_streamrip_settings,
 )
@@ -129,6 +130,11 @@ def render_streamrip_setup(
     expanded_value = streamrip_needs_setup if expanded_override is None else bool(expanded_override)
     with st.expander("🎧 Streamrip Setup", expanded=expanded_value):
         st.caption(f"Config path: `{streamrip_config_path}`")
+        installed = is_streamrip_installed()
+        status_color = "green" if installed else "red"
+        status_text = "Installed" if installed else "Not Found"
+        st.markdown(f"Status: <span style='color:{status_color}; font-weight:bold;'>{status_text}</span>", unsafe_allow_html=True)
+        
         if not streamrip_config_ready:
             _show_error("Streamrip config is not available yet. Install streamrip and restart the app.")
         else:

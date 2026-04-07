@@ -49,6 +49,18 @@ def _publish_discovery_status(message: str, local_callback: Optional[Callable[[s
             pass
 
 
+def get_default_downloads_folder() -> str:
+    home = os.path.expanduser("~")
+    music_folder = os.path.join(home, "Music")
+    if os.path.isdir(music_folder):
+        return music_folder
+    return home
+
+
+def is_streamrip_installed() -> bool:
+    return bool(resolve_streamrip_command())
+
+
 def format_eta(seconds: float) -> str:
     total_seconds = max(0, int(round(seconds)))
     hours, remainder = divmod(total_seconds, 3600)
@@ -395,6 +407,10 @@ def load_streamrip_settings(config_path: str) -> tuple[dict, str]:
             if configured_failed_path:
                 failed_downloads_path = configured_failed_path
 
+        downloads_folder = str(config.file.downloads.folder or "").strip()
+        if not downloads_folder:
+            downloads_folder = get_default_downloads_folder()
+
         return {
             "use_auth_token": bool(qobuz.use_auth_token),
             "email_or_userid": qobuz.email_or_userid or "",
@@ -402,7 +418,7 @@ def load_streamrip_settings(config_path: str) -> tuple[dict, str]:
             "app_id": qobuz.app_id or "",
             "quality": int(qobuz.quality),
             "codec_selection": codec_selection,
-            "downloads_folder": config.file.downloads.folder or "",
+            "downloads_folder": downloads_folder,
             "downloads_db_path": downloads_db_path,
             "failed_downloads_path": failed_downloads_path,
         }, ""

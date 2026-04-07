@@ -9,8 +9,10 @@ from app_modules.streamrip import (
     QUALITY_OPTIONS,
     ensure_streamrip_config_file,
     format_quality_option,
+    get_default_downloads_folder,
     get_env_qobuz_values,
     get_streamrip_config_path,
+    is_streamrip_installed,
     load_streamrip_settings,
     save_streamrip_settings,
 )
@@ -322,7 +324,7 @@ default_codec = str(streamrip_settings.get("codec_selection", "Original")) if st
 if default_codec not in CODEC_OPTIONS:
     default_codec = "Original"
 
-default_downloads_folder = str(streamrip_settings.get("downloads_folder", "")).strip() if streamrip_settings else ""
+default_downloads_folder = str(streamrip_settings.get("downloads_folder", "") or get_default_downloads_folder()).strip()
 init_streamrip_download_state(default_downloads_folder)
 init_streamrip_form_state(
     streamrip_settings=streamrip_settings,
