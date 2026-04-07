@@ -599,7 +599,7 @@ def run_streamrip_batches(
     codec_selection: str,
     progress_callback: Optional[Callable[[str, str], None]] = None,
     status_callback: Optional[Callable[[int, int, str], None]] = None,
-) -> tuple[int, int, List[dict], List[dict], str]:
+) -> tuple[int, int, List[dict], List[dict], List[dict], str]:
     base_cmd = resolve_streamrip_command()
     log_path = os.path.abspath(os.path.join("exports", "streamrip_last.log"))
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -621,25 +621,26 @@ def run_streamrip_batches(
         progress_callback(log_path, _read_log_tail(log_path))
 
     if not base_cmd:
-        return 0, 0, [{"Batch": "Init", "URL": "N/A", "Reason": "Streamrip not found for interpreter. Install with: python -m pip install streamrip"}], [], log_path
+        return 0, 0, [{"Batch": "Init", "URL": "N/A", "Reason": "Streamrip not found for interpreter"}], [], [], log_path
     if not downloads_folder:
-        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": "Streamrip Downloads Folder Path is blank. Open 'Streamrip Setup'."}], [], log_path
+        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": "Streamrip Downloads Folder Path is blank."}], [], [], log_path
     if not downloads_db_path:
-        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": "Streamrip downloads database path is blank."}], [], log_path
+        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": "Streamrip downloads database path is blank."}], [], [], log_path
     if not failed_downloads_path:
-        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": "Streamrip failed downloads path is blank."}], [], log_path
+        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": "Streamrip failed downloads path is blank."}], [], [], log_path
     if streamrip_settings_error:
-        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": f"Could not validate Streamrip config: {streamrip_settings_error}"}], [], log_path
+        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": f"Could not validate Streamrip config: {streamrip_settings_error}"}], [], [], log_path
     try:
         os.makedirs(os.path.dirname(os.path.abspath(os.path.expanduser(downloads_db_path))), exist_ok=True)
         os.makedirs(os.path.abspath(os.path.expanduser(failed_downloads_path)), exist_ok=True)
     except Exception as e:
-        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": f"Could not prepare streamrip database/failed directories: {e}"}], [], log_path
+        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": f"Could not prepare streamrip database/failed directories: {e}"}], [], [], log_path
 
     success_count = 0
     total_urls = 0
     failures: List[dict] = []
     skipped: List[dict] = []
+    successes: List[dict] = []
     batch_urls: List[tuple[str, List[str]]] = []
     for fname in batch_files:
         rel_path = os.path.join("exports", fname)
@@ -744,8 +745,15 @@ def run_streamrip_batches(
                     failures.append({"Batch": fname, "URL": url, "Reason": f"exit code {result_code}"})
                 file_failed = True
             else:
-                if "already in the database" in recent_output or "skipping" in recent_output or "already downloaded" in recent_output:
+                has_skip_keywords = "already in the database" in recent_output or "skipping" in recent_output or "already downloaded" in recent_output
+                has_download_keywords = "downloading" in recent_output or "saved to" in recent_output
+                
+                # If we have skip keywords but NO download keywords, it's a total skip
+                if has_skip_keywords and not has_download_keywords:
                     skipped.append({"Batch": fname, "URL": url, "Reason": "Already downloaded/skipped"})
+                else:
+                    # Otherwise, if it finished with 0, we treat it as a success (even if partial)
+                    successes.append({"Batch": fname, "URL": url, "Status": "Downloaded / Loaded"})
             processed_urls += 1
             if status_callback:
                 if result_code == 0:
@@ -777,7 +785,7 @@ def run_streamrip_batches(
         else:
             status_callback(total_urls, total_urls, "Finished successfully.")
 
-    return success_count, total_urls, failures, skipped, log_path
+    return success_count, total_urls, failures, skipped, successes, log_path
 
 
 def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:

@@ -281,7 +281,7 @@ def render_results_and_exports(
                         rip_progress_caption.caption(message)
 
                     with st.spinner("Running streamrip for exported batches..."):
-                        success_count, total_urls, failures, skipped, log_path = run_streamrip_batches(
+                        success_count, total_urls, failures, skipped, successes, log_path = run_streamrip_batches(
                             batch_files,
                             rip_quality,
                             rip_codec,
@@ -292,10 +292,11 @@ def render_results_and_exports(
                     _update_rip_status(total_urls, total_urls, "Streamrip run finished.")
                     st.session_state.rip_last_log_path = log_path
                     
-                    if failures or skipped:
+                    if failures or skipped or successes:
                         st.session_state.rip_last_level = "warning" if failures else "success"
                         st.session_state.rip_last_failures = failures
                         st.session_state.rip_last_skipped = skipped
+                        st.session_state.rip_last_successes = successes
                         st.session_state.rip_last_message = (
                             f"Auto rip processed {total_urls} URL(s). See results below:"
                         )
@@ -325,8 +326,13 @@ def render_results_and_exports(
             
         _failed_list = st.session_state.get("rip_last_failures", [])
         _skipped_list = st.session_state.get("rip_last_skipped", [])
-        if _failed_list or _skipped_list:
+        _success_list = st.session_state.get("rip_last_successes", [])
+        if _failed_list or _skipped_list or _success_list:
             import pandas as pd
+            if _success_list:
+                st.write("**✅ Newly Downloaded / Loaded**")
+                df_success = pd.DataFrame(_success_list)
+                st.dataframe(df_success, column_config={"URL": st.column_config.LinkColumn()}, width="stretch")
             if _failed_list:
                 st.write("**⚠️ Errors**")
                 df_failures = pd.DataFrame(_failed_list)

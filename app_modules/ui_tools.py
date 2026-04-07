@@ -5,12 +5,12 @@ import streamlit as st
 from app_modules.streamrip import export_qobuz_batches, extract_qobuz_urls, run_streamrip_batches
 
 
-def _read_text_upload(uploaded_files) -> str:
+def _read_text_upload(uploaded_files) -> list[tuple[str, str]]:
     if not uploaded_files:
-        return ""
+        return []
     if not isinstance(uploaded_files, list):
         uploaded_files = [uploaded_files]
-    return "\n".join(f.getvalue().decode("utf-8", errors="ignore") for f in uploaded_files)
+    return [(f.name, f.getvalue().decode("utf-8", errors="ignore")) for f in uploaded_files]
 
 
 def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:
@@ -52,10 +52,50 @@ def render_direct_qobuz_rip_tab(
         accept_multiple_files=True,
         disabled=locked,
     )
-    uploaded_text = _read_text_upload(uploaded_qobuz_files)
-    merged_text = f"{pasted_text}\n{uploaded_text}".strip()
-    direct_urls = extract_qobuz_urls(merged_text)
+    # Prepare batches: separate uploaded files and pasted text
+    batch_map = {} # filename -> list of urls
+    
+    # 1. Handle pasted text
+    pasted_urls = extract_qobuz_urls(pasted_text)
+    if pasted_urls:
+        batch_map["qobuz_batch_pasted.txt"] = pasted_urls
+        
+    # 2. Handle uploaded files
+    uploaded_data = _read_text_upload(uploaded_qobuz_files)
+    for fname, content in uploaded_data:
+        f_urls = extract_qobuz_urls(content)
+        if f_urls:
+            # If multiple files have the same name (unlikely in Streamlit but possible), 
+            # we merge them or suffix them. Here we just append.
+            if fname in batch_map:
+                batch_map[fname].extend(f_urls)
+            else:
+                batch_map[fname] = f_urls
 
+    # Deduplicate URLs across all batches to avoid redundant ripping
+    all_urls_dedup = []
+    seen_urls = set()
+    final_batch_files = []
+    
+    export_dir = os.path.abspath("exports")
+    os.makedirs(export_dir, exist_ok=True)
+
+    for fname, urls in batch_map.items():
+        unique_urls_in_batch = []
+        for u in urls:
+            if u not in seen_urls:
+                seen_urls.add(u)
+                unique_urls_in_batch.append(u)
+                all_urls_dedup.append(u)
+        
+        if unique_urls_in_batch:
+            # Save this batch to exports/
+            filepath = os.path.join(export_dir, fname)
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write("\n".join(unique_urls_in_batch) + "\n")
+            final_batch_files.append(fname)
+
+    direct_urls = all_urls_dedup
     st.caption(f"Detected {len(direct_urls)} unique Qobuz URL(s).")
     if direct_urls:
         st.download_button(
@@ -84,12 +124,8 @@ def render_direct_qobuz_rip_tab(
         if not direct_urls:
             st.warning("No Qobuz links detected. Paste links or upload a file first.")
         else:
-            batch_files, total_batches = export_qobuz_batches(
-                direct_urls,
-                max(1, len(direct_urls)),
-                rip_quality,
-                rip_codec,
-            )
+            # We already have our batch files prepared in exports/ and in final_batch_files
+            total_batches = len(final_batch_files)
             st.info(f"Prepared {total_batches} batch file(s) in `/exports/`. Starting streamrip...")
 
             live_log_caption = st.empty()
@@ -108,8 +144,8 @@ def render_direct_qobuz_rip_tab(
                 rip_progress_caption.caption(message)
 
             with st.spinner("Running streamrip for parsed Qobuz links..."):
-                success_count, total_urls, failures, skipped, log_path = run_streamrip_batches(
-                    batch_files,
+                success_count, total_urls, failures, skipped, successes, log_path = run_streamrip_batches(
+                    final_batch_files,
                     rip_quality,
                     rip_codec,
                     progress_callback=_update_live_log,
@@ -119,10 +155,11 @@ def render_direct_qobuz_rip_tab(
             _update_rip_status(total_urls, total_urls, "Streamrip run finished.")
             st.session_state.direct_rip_last_log_path = log_path
             
-            if failures or skipped:
+            if failures or skipped or successes:
                 st.session_state.direct_rip_last_level = "warning" if failures else "success"
                 st.session_state.direct_rip_last_failures = failures
                 st.session_state.direct_rip_last_skipped = skipped
+                st.session_state.direct_rip_last_successes = successes
                 st.session_state.direct_rip_last_message = (
                     f"Direct rip processed {total_urls} URL(s). See results below:"
                 )
@@ -149,8 +186,13 @@ def render_direct_qobuz_rip_tab(
             
         _failed_list = st.session_state.get("direct_rip_last_failures", [])
         _skipped_list = st.session_state.get("direct_rip_last_skipped", [])
-        if _failed_list or _skipped_list:
+        _success_list = st.session_state.get("direct_rip_last_successes", [])
+        if _failed_list or _skipped_list or _success_list:
             import pandas as pd
+            if _success_list:
+                st.write("**✅ Newly Downloaded / Loaded**")
+                df_success = pd.DataFrame(_success_list)
+                st.dataframe(df_success, column_config={"URL": st.column_config.LinkColumn()}, width="stretch")
             if _failed_list:
                 st.write("**⚠️ Errors**")
                 df_failures = pd.DataFrame(_failed_list)
