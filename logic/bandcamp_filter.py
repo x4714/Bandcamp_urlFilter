@@ -110,7 +110,12 @@ def filter_entries(lines: List[str], filters: Dict[str, Any]) -> List[LogEntry]:
     """
     results = []
     
-    tag_filter = filters.get("tag", "").lower().strip()
+    tag_filter_str = filters.get("tag", "")
+    include_tags = [t.strip().lower() for t in tag_filter_str.split(',')] if tag_filter_str.strip() else []
+    
+    exclude_tag_str = filters.get("exclude_tag", "")
+    exclude_tags = [t.strip().lower() for t in exclude_tag_str.split(',')] if exclude_tag_str.strip() else []
+    
     location_filter = filters.get("location", "").lower().strip()
     min_tracks = filters.get("min_tracks")
     max_tracks = filters.get("max_tracks")
@@ -128,10 +133,16 @@ def filter_entries(lines: List[str], filters: Dict[str, Any]) -> List[LogEntry]:
             continue
 
         meta_lower = entry.meta_raw.lower()
+        genre_lower = entry.genre.lower()
 
-        if tag_filter and tag_filter not in entry.genre.lower() and tag_filter not in meta_lower:
-            continue
-            
+        if include_tags:
+            if not any(t in genre_lower or t in meta_lower for t in include_tags):
+                continue
+                
+        if exclude_tags:
+            if any(t in genre_lower or t in meta_lower for t in exclude_tags):
+                continue
+
         if location_filter and location_filter not in meta_lower:
             continue
 
@@ -151,7 +162,7 @@ def filter_entries(lines: List[str], filters: Dict[str, Any]) -> List[LogEntry]:
             flag = entry.free_flag.strip().lower()
             if free_mode == "free" and flag != "free":
                 continue
-            if free_mode == "paid" and flag != "paid":
+            if free_mode == "paid" and flag == "free":
                 continue
 
         results.append(entry)

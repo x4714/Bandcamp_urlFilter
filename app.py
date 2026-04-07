@@ -170,6 +170,7 @@ main_tab = st.radio(
 st.sidebar.header("Configuration")
 
 tag_input = ""
+exclude_tag_input = ""
 location_input = ""
 min_tracks = None
 max_tracks = None
@@ -182,7 +183,8 @@ dry_run = False
 
 if main_tab == "Bandcamp Matcher":
     with st.sidebar.expander("🎯 Matcher Filter Rules", expanded=False):
-        tag_input = st.text_input("Genre / Tag", value="", help="Filter by tag or genre.")
+        tag_input = st.text_input("Include Genre / Tag", value="", help="Filter by tag or genre. Separate multiple with commas (e.g. 'rock, jazz').")
+        exclude_tag_input = st.text_input("Exclude Genre / Tag", value="", help="Exclude tags or genres. Separate multiple with commas.")
         location_input = st.text_input("Location", value="", help="Filter by location text in metadata.")
         min_tracks = st.number_input("Min Tracks", min_value=1, value=None, step=1, help="Leave empty for no minimum.")
         max_tracks = st.number_input("Max Tracks", min_value=1, value=None, step=1, help="Leave empty for no maximum.")
@@ -448,6 +450,7 @@ if main_tab == "Bandcamp Matcher":
 
     filter_config = {
         "tag": tag_input,
+        "exclude_tag": exclude_tag_input,
         "location": location_input,
         "min_tracks": int(min_tracks) if min_tracks else None,
         "max_tracks": int(max_tracks) if max_tracks else None,
