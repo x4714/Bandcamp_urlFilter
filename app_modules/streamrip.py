@@ -374,10 +374,17 @@ def load_streamrip_settings(config_path: str) -> tuple[dict, str]:
             codec_selection = "Original"
         downloads_db_path = default_db_path
         failed_downloads_path = default_failed_path
+        db_cfg = None
         if hasattr(config.file, "database"):
-            database_cfg = config.file.database
-            configured_db_path = str(getattr(database_cfg, "downloads_path", "") or "").strip()
-            configured_failed_path = str(getattr(database_cfg, "failed_downloads_path", "") or "").strip()
+            db_cfg = config.file.database
+        elif hasattr(config.file, "session") and hasattr(config.file.session, "database"):
+            db_cfg = config.file.session.database
+        elif hasattr(config, "session") and hasattr(config.session, "database"):
+            db_cfg = config.session.database
+
+        if db_cfg:
+            configured_db_path = str(getattr(db_cfg, "downloads_path", "") or "").strip()
+            configured_failed_path = str(getattr(db_cfg, "failed_downloads_path", "") or "").strip()
             if configured_db_path:
                 downloads_db_path = configured_db_path
             if configured_failed_path:
@@ -454,13 +461,22 @@ def save_streamrip_settings(
             file_data.downloads.folder = downloads_folder.strip()
         if hasattr(file_data, "downloads") and hasattr(file_data.downloads, "failed_downloads_path"):
             setattr(file_data.downloads, "failed_downloads_path", selected_failed_downloads_path)
+        db_targets = []
         if hasattr(file_data, "database"):
-            if hasattr(file_data.database, "downloads_enabled"):
-                file_data.database.downloads_enabled = True
-            if hasattr(file_data.database, "downloads_path"):
-                file_data.database.downloads_path = selected_downloads_db_path
-            if hasattr(file_data.database, "failed_downloads_path"):
-                file_data.database.failed_downloads_path = selected_failed_downloads_path
+            db_targets.append(file_data.database)
+        if hasattr(file_data, "session") and hasattr(file_data.session, "database"):
+            db_targets.append(file_data.session.database)
+        if hasattr(config, "session") and hasattr(config.session, "database"):
+            db_targets.append(config.session.database)
+
+        # Ensure we set at least one database target
+        for db_target in db_targets:
+            if hasattr(db_target, "downloads_enabled"):
+                db_target.downloads_enabled = True
+            if hasattr(db_target, "downloads_path"):
+                db_target.downloads_path = selected_downloads_db_path
+            if hasattr(db_target, "failed_downloads_path"):
+                db_target.failed_downloads_path = selected_failed_downloads_path
 
         file_data.set_modified()
         config.save_file()
