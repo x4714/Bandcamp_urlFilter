@@ -294,16 +294,15 @@ def render_results_and_exports(
                     
                     if failures or skipped:
                         st.session_state.rip_last_level = "warning" if failures else "success"
-                        msg_parts = []
-                        if failures:
-                            msg_parts.append(f"Errors ({len(failures)}):\n" + "\n".join(failures))
-                        if skipped:
-                            msg_parts.append(f"Skipped ({len(skipped)}):\n" + "\n".join(skipped))
+                        st.session_state.rip_last_failures = failures
+                        st.session_state.rip_last_skipped = skipped
                         st.session_state.rip_last_message = (
-                            f"Auto rip processed {total_urls} URL(s):\n" + "\n\n".join(msg_parts)
+                            f"Auto rip processed {total_urls} URL(s). See results below:"
                         )
                     else:
                         st.session_state.rip_last_level = "success"
+                        st.session_state.rip_last_failures = []
+                        st.session_state.rip_last_skipped = []
                         st.session_state.rip_last_message = (
                             f"Rip finished for {success_count} batch file(s) / {total_urls} URL(s)."
                         )
@@ -323,6 +322,19 @@ def render_results_and_exports(
             st.warning(st.session_state.rip_last_message)
         else:
             st.info(st.session_state.rip_last_message)
+            
+        _failed_list = st.session_state.get("rip_last_failures", [])
+        _skipped_list = st.session_state.get("rip_last_skipped", [])
+        if _failed_list or _skipped_list:
+            import pandas as pd
+            if _failed_list:
+                st.write("**⚠️ Errors**")
+                df_failures = pd.DataFrame(_failed_list)
+                st.dataframe(df_failures, column_config={"URL": st.column_config.LinkColumn()}, width="stretch")
+            if _skipped_list:
+                st.write("**⏭️ Skipped**")
+                df_skipped = pd.DataFrame(_skipped_list)
+                st.dataframe(df_skipped, column_config={"URL": st.column_config.LinkColumn()}, width="stretch")
     if st.session_state.rip_last_log_path and os.path.exists(st.session_state.rip_last_log_path):
         st.caption(f"Last rip log: {st.session_state.rip_last_log_path}")
         with open(st.session_state.rip_last_log_path, "r", encoding="utf-8", errors="replace") as f:

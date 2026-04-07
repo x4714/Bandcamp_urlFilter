@@ -599,7 +599,7 @@ def run_streamrip_batches(
     codec_selection: str,
     progress_callback: Optional[Callable[[str, str], None]] = None,
     status_callback: Optional[Callable[[int, int, str], None]] = None,
-) -> tuple[int, int, List[str], List[str], str]:
+) -> tuple[int, int, List[dict], List[dict], str]:
     base_cmd = resolve_streamrip_command()
     log_path = os.path.abspath(os.path.join("exports", "streamrip_last.log"))
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
@@ -621,43 +621,25 @@ def run_streamrip_batches(
         progress_callback(log_path, _read_log_tail(log_path))
 
     if not base_cmd:
-        return 0, 0, [
-            f"Streamrip not found for interpreter: {sys.executable}",
-            f"Install with: {sys.executable} -m pip install streamrip",
-        ], log_path
+        return 0, 0, [{"Batch": "Init", "URL": "N/A", "Reason": "Streamrip not found for interpreter. Install with: python -m pip install streamrip"}], [], log_path
     if not downloads_folder:
-        return 0, 0, [
-            "Streamrip Downloads Folder Path is blank.",
-            "Open 'Streamrip Setup' and set a non-empty Downloads Folder Path, then save config before ripping.",
-        ], log_path
+        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": "Streamrip Downloads Folder Path is blank. Open 'Streamrip Setup'."}], [], log_path
     if not downloads_db_path:
-        return 0, 0, [
-            "Streamrip downloads database path is blank.",
-            "Open 'Streamrip Setup' and set a non-empty Downloads DB Path, then save config before ripping.",
-        ], log_path
+        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": "Streamrip downloads database path is blank."}], [], log_path
     if not failed_downloads_path:
-        return 0, 0, [
-            "Streamrip failed downloads path is blank.",
-            "Open 'Streamrip Setup' and set a non-empty Failed Downloads Folder Path, then save config before ripping.",
-        ], log_path
+        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": "Streamrip failed downloads path is blank."}], [], log_path
     if streamrip_settings_error:
-        return 0, 0, [
-            f"Could not validate Streamrip config: {streamrip_settings_error}",
-            "Open 'Streamrip Setup', confirm Downloads Folder Path is set, and save config before ripping.",
-        ], log_path
+        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": f"Could not validate Streamrip config: {streamrip_settings_error}"}], [], log_path
     try:
         os.makedirs(os.path.dirname(os.path.abspath(os.path.expanduser(downloads_db_path))), exist_ok=True)
         os.makedirs(os.path.abspath(os.path.expanduser(failed_downloads_path)), exist_ok=True)
     except Exception as e:
-        return 0, 0, [
-            f"Could not prepare streamrip database/failed directories: {e}",
-            "Open 'Streamrip Setup' and fix Downloads DB Path / Failed Downloads Folder Path.",
-        ], log_path
+        return 0, 0, [{"Batch": "Setup", "URL": "N/A", "Reason": f"Could not prepare streamrip database/failed directories: {e}"}], [], log_path
 
     success_count = 0
     total_urls = 0
-    failures: List[str] = []
-    skipped: List[str] = []
+    failures: List[dict] = []
+    skipped: List[dict] = []
     batch_urls: List[tuple[str, List[str]]] = []
     for fname in batch_files:
         rel_path = os.path.join("exports", fname)
@@ -665,13 +647,13 @@ def run_streamrip_batches(
             with open(rel_path, "r", encoding="utf-8") as f:
                 urls = [line.strip() for line in f if line.strip()]
         except Exception as e:
-            failures.append(f"{fname}: could not read batch file ({e})")
+            failures.append({"Batch": fname, "URL": "N/A", "Reason": f"could not read batch file ({e})"})
             with open(log_path, "a", encoding="utf-8") as log:
                 log.write(f"[{fname}] read error: {e}\n")
             continue
 
         if not urls:
-            failures.append(f"{fname}: no URLs found")
+            failures.append({"Batch": fname, "URL": "N/A", "Reason": "no URLs found"})
             with open(log_path, "a", encoding="utf-8") as log:
                 log.write(f"[{fname}] no URLs found\n")
             continue
@@ -731,7 +713,7 @@ def run_streamrip_batches(
                         f"[timeout] {datetime.now(timezone.utc).isoformat()} :: {' '.join(cmd)}\n\n"
                     )
                 failures.append(
-                    f"{fname}: {url} -> timed out after {streamrip_timeout_seconds}s"
+                    {"Batch": fname, "URL": url, "Reason": f"timed out after {streamrip_timeout_seconds}s"}
                 )
                 file_failed = True
                 processed_urls += 1
@@ -757,17 +739,13 @@ def run_streamrip_batches(
 
             if result_code != 0:
                 if "enter your qobuz email" in recent_output or "enter your qobuz password" in recent_output:
-                    failures.append(
-                        f"{fname}: {url} -> Streamrip is not configured. "
-                        "Open 'Streamrip Setup' in the Web UI and set Qobuz credentials "
-                        "(or run `rip config open`)."
-                    )
+                    failures.append({"Batch": fname, "URL": url, "Reason": "Streamrip is not configured. Open 'Streamrip Setup'"})
                 else:
-                    failures.append(f"{fname}: {url} -> exit code {result_code}")
+                    failures.append({"Batch": fname, "URL": url, "Reason": f"exit code {result_code}"})
                 file_failed = True
             else:
                 if "already in the database" in recent_output or "skipping" in recent_output or "already downloaded" in recent_output:
-                    skipped.append(f"{fname}: {url} -> already downloaded/skipped")
+                    skipped.append({"Batch": fname, "URL": url, "Reason": "Already downloaded/skipped"})
             processed_urls += 1
             if status_callback:
                 if result_code == 0:
