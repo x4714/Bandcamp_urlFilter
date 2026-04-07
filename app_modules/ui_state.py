@@ -10,6 +10,8 @@ SESSION_DEFAULTS = {
     "current_index": 0,
     "total_entries": 0,
     "status_log": "",
+    "is_dry_run_run": False,
+    "dry_run_results": [],
     "rip_last_level": "",
     "rip_last_message": "",
     "rip_last_log_path": "",

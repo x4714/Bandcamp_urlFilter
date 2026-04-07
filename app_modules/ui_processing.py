@@ -42,6 +42,8 @@ def handle_process_submission(
     st.session_state.rip_last_message = ""
     st.session_state.rip_last_log_path = ""
     st.session_state.results = []
+    st.session_state.is_dry_run_run = False
+    st.session_state.dry_run_results = []
 
     stringio = StringIO(uploaded_file.getvalue().decode("utf-8", errors="ignore"))
     lines = stringio.readlines()
@@ -56,33 +58,10 @@ def handle_process_submission(
         return
 
     if dry_run:
-        st.info("Dry Run enabled. Qobuz matching skipped. Showing filtered URLs:")
-        df_dry = pd.DataFrame(
-            [
-                {
-                    "Bandcamp URL": e.url,
-                    "Artist": e.artist,
-                    "Title": e.title,
-                    "Genre": e.genre,
-                    "Tracks": e.track_count,
-                    "Duration (min)": e.duration_min,
-                }
-                for e in filtered_entries
-            ]
-        )
-        st.dataframe(
-            df_dry,
-            column_config={"Bandcamp URL": st.column_config.LinkColumn()},
-            width="stretch",
-        )
-        bc_urls = "\n".join([e.url for e in filtered_entries if e.url])
-        st.download_button(
-            label="Download Filtered Bandcamp Links (.txt)",
-            data=bc_urls,
-            file_name="filtered_bandcamp_urls.txt",
-            mime="text/plain",
-        )
-        return
+        st.session_state.is_dry_run_run = True
+        st.session_state.dry_run_results = filtered_entries
+        st.session_state.process_complete = True
+        st.rerun()
 
     load_dotenv(override=True)
     if not os.getenv("QOBUZ_USER_AUTH_TOKEN"):
@@ -139,7 +118,7 @@ def run_processing_tick() -> None:
 
 
 def render_status_log(dry_run: bool) -> None:
-    if not dry_run and st.session_state.status_log:
+    if st.session_state.status_log:
         st.write("### Status Log")
         st.text(st.session_state.status_log)
 
@@ -151,7 +130,38 @@ def render_results_and_exports(
     auto_rip_after_export: bool,
     streamrip_needs_setup: bool = False,
 ) -> None:
-    if dry_run or not st.session_state.results:
+    if st.session_state.is_dry_run_run:
+        st.markdown("---")
+        st.subheader("📊 Dry Run Filtered URLs")
+        st.info("Dry Run was enabled. Qobuz matching skipped. Showing filtered URLs from Bandcamp:")
+        df_dry = pd.DataFrame(
+            [
+                {
+                    "Bandcamp URL": e.url,
+                    "Artist": e.artist,
+                    "Title": e.title,
+                    "Genre": e.genre,
+                    "Tracks": e.track_count,
+                    "Duration (min)": e.duration_min,
+                }
+                for e in st.session_state.dry_run_results
+            ]
+        )
+        st.dataframe(
+            df_dry,
+            column_config={"Bandcamp URL": st.column_config.LinkColumn()},
+            width="stretch",
+        )
+        bc_urls = "\n".join([e.url for e in st.session_state.dry_run_results if e.url])
+        st.download_button(
+            label="Download Filtered Bandcamp Links (.txt)",
+            data=bc_urls,
+            file_name="filtered_bandcamp_urls.txt",
+            mime="text/plain",
+        )
+        return
+
+    if not st.session_state.results:
         return
 
     st.markdown("---")
