@@ -217,6 +217,7 @@ def render_results_and_exports(
     rip_codec: str,
     auto_rip_after_export: bool,
     streamrip_needs_setup: bool = False,
+    streamrip_missing_required_fields: list[str] | None = None,
 ) -> None:
     if st.session_state.is_dry_run_run:
         st.markdown("---")
@@ -340,6 +341,14 @@ def render_results_and_exports(
     st.markdown("---")
     st.subheader("💾 Local Export & Batch Generator")
     st.markdown("Export on the left, or rip this run's matched Qobuz results on the right.")
+    missing_required_fields = list(streamrip_missing_required_fields or [])
+    missing_labels = {
+        "email_or_userid": "Qobuz Email or User ID",
+        "password_or_token": "Qobuz Password Hash or Auth Token",
+        "downloads_folder": "Downloads Folder Path",
+        "downloads_db_path": "Downloads DB Path",
+        "failed_downloads_path": "Failed Downloads Folder Path",
+    }
 
     col_exp1, col_exp2 = st.columns([1, 2])
     with col_exp1:
@@ -349,7 +358,28 @@ def render_results_and_exports(
         with btn_col1:
             export_btn = st.button("Export to Local Disk", type="primary")
         with btn_col2:
-            rip_this_run_btn = st.button("Rip This Run's Qobuz Results")
+            rip_this_run_btn = st.button(
+                "Rip This Run's Qobuz Results",
+                disabled=streamrip_needs_setup,
+                help=(
+                    "Disabled until required Streamrip settings are completed."
+                    if streamrip_needs_setup
+                    else "Run Streamrip immediately for this run's exported URLs."
+                ),
+            )
+
+    if streamrip_needs_setup:
+        labels = [missing_labels.get(f, f.replace("_", " ").title()) for f in missing_required_fields]
+        if labels:
+            st.warning("Rip is disabled. Missing settings: " + ", ".join(labels))
+        else:
+            st.warning("Rip is disabled. Streamrip setup is incomplete.")
+        if st.button("Open Streamrip Settings Tab", key="matcher_open_streamrip_settings"):
+            if missing_required_fields:
+                st.session_state.streamrip_setup_focus_field = missing_required_fields[0]
+            st.session_state.main_tab_selection_pending = "Streamrip Settings"
+            st.session_state.streamrip_setup_attention_message = "Finish the missing Streamrip settings to enable ripping."
+            st.rerun()
 
     if export_btn or rip_this_run_btn:
         _ui_processing_debug(

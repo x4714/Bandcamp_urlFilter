@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 from datetime import datetime, timezone
 
 import streamlit as st
@@ -16,6 +17,7 @@ from app_modules.streamrip import (
     is_streamrip_installed,
     read_streamrip_config_text,
     save_streamrip_settings,
+    upsert_env_values,
 )
 
 
@@ -110,6 +112,7 @@ def render_streamrip_setup(
     expanded_override: bool | None = None,
     key_prefix: str = "streamrip_setup",
     include_browser: bool = False,
+    missing_required_fields: list[str] | None = None,
 ) -> None:
     _setup_debug(
         f"render_streamrip_setup() called. needs_setup={streamrip_needs_setup}, "
@@ -144,6 +147,79 @@ def render_streamrip_setup(
             st.session_state[sync_marker_key] = current_signature
             _setup_debug(f"Widget primed `{widget_key}` from `{shared_key}`.")
 
+    field_labels = {
+        "email_or_userid": "Qobuz Email or User ID",
+        "password_or_token": "Qobuz Password Hash or Auth Token",
+        "downloads_folder": "Downloads Folder Path",
+        "downloads_db_path": "Downloads DB Path",
+        "failed_downloads_path": "Failed Downloads Folder Path",
+        "app_id": "Qobuz App ID",
+        "quality": "Default Quality in streamrip config",
+        "codec": "Default Codec in streamrip config",
+        "use_auth_token": "Use auth token mode",
+    }
+
+    def _focus_field(field_key: str) -> None:
+        label = field_labels.get(field_key, "")
+        if not label:
+            return
+        label_js = json.dumps(label)
+        st.iframe(
+            f"""
+            <script>
+                const doc = window.parent.document;
+                const target = {label_js};
+                const tryFocus = (attempt = 0) => {{
+                    const labels = Array.from(doc.querySelectorAll('[data-testid="stWidgetLabel"] label, label'));
+                    const match = labels.find((el) => ((el.textContent || '').trim().includes(target)));
+                    if (!match) {{
+                        if (attempt < 40) {{
+                            setTimeout(() => tryFocus(attempt + 1), 80);
+                        }}
+                        return;
+                    }}
+                    doc.querySelectorAll('.streamrip-focus-highlight').forEach((el) => {{
+                        el.classList.remove('streamrip-focus-highlight');
+                        el.style.outline = '';
+                        el.style.outlineOffset = '';
+                        el.style.borderRadius = '';
+                    }});
+                    const container = match.closest('[data-testid="stElementContainer"]') || match.parentElement;
+                    if (!container) {{
+                        return;
+                    }}
+                    container.classList.add('streamrip-focus-highlight');
+                    container.style.outline = '3px solid #ff4b4b';
+                    container.style.outlineOffset = '4px';
+                    container.style.borderRadius = '8px';
+                    container.style.boxShadow = '0 0 0 2px rgba(255, 75, 75, 0.25), 0 0 18px rgba(255, 75, 75, 0.45)';
+                    container.style.transition = 'outline-color 0.6s ease, box-shadow 0.6s ease, opacity 0.6s ease';
+                    container.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+                    const inputEl = container.querySelector('input, textarea, select, button');
+                    if (inputEl && typeof inputEl.focus === 'function') {{
+                        inputEl.focus({{ preventScroll: true }});
+                    }}
+                    setTimeout(() => {{
+                        container.style.outlineColor = 'rgba(255, 75, 75, 0)';
+                        container.style.boxShadow = '0 0 0 0 rgba(255, 75, 75, 0), 0 0 0 rgba(255, 75, 75, 0)';
+                        container.style.opacity = '1';
+                    }}, 1400);
+                    setTimeout(() => {{
+                        container.classList.remove('streamrip-focus-highlight');
+                        container.style.outline = '';
+                        container.style.outlineOffset = '';
+                        container.style.borderRadius = '';
+                        container.style.boxShadow = '';
+                        container.style.transition = '';
+                        container.style.opacity = '';
+                    }}, 2000);
+                }};
+                tryFocus();
+            </script>
+            """,
+            height=1,
+        )
+
     _prime_widget("use_auth_token", "streamrip_form_use_auth_token")
     _prime_widget("email_or_userid", "streamrip_form_email_or_userid")
     _prime_widget("password_or_token", "streamrip_form_password_or_token")
@@ -165,6 +241,16 @@ def render_streamrip_setup(
         if not streamrip_config_ready:
             _show_error("Streamrip config is not available yet. Install streamrip and restart the app.")
         else:
+            if missing_required_fields:
+                st.warning("Required Streamrip settings are still missing. Click one to jump to it:")
+                missing_cols = st.columns(max(1, min(len(missing_required_fields), 3)))
+                for idx, field_key in enumerate(missing_required_fields):
+                    label = field_labels.get(field_key, field_key.replace("_", " ").title())
+                    with missing_cols[idx % len(missing_cols)]:
+                        if st.button(f"Set: {label}", key=_k(f"jump_missing_{field_key}")):
+                            st.session_state.streamrip_setup_focus_field = field_key
+                            st.rerun()
+
             col_setup1, col_setup2, col_setup3 = st.columns([1, 1, 1])
             with col_setup1:
                 if st.button(
@@ -260,12 +346,22 @@ def render_streamrip_setup(
                             failed_downloads_path=current_failed_downloads_path,
                         )
                         if save_ok:
+                            env_updates: dict[str, str] = {}
+                            if str(token_for_lookup or "").strip():
+                                env_updates["QOBUZ_USER_AUTH_TOKEN"] = str(token_for_lookup).strip()
+                            if str(app_id_for_lookup or "").strip():
+                                env_updates["QOBUZ_APP_ID"] = str(app_id_for_lookup).strip()
+                            env_ok, env_msg = upsert_env_values(".env", env_updates)
                             _setup_debug("Fetched user identifier and saved config successfully.")
                             st.success(
                                 f"{lookup_msg}: {lookup_data.get('identifier', '')}. "
                                 "Saved to streamrip config."
                             )
-                            st.rerun()
+                            if env_ok:
+                                st.rerun()
+                            else:
+                                _setup_debug(f"Fetched identifier saved, but .env sync failed: {env_msg}")
+                                st.warning(f"Saved Streamrip config, but could not sync `.env`: {env_msg}")
                         else:
                             _setup_debug(f"Saving fetched user identifier failed: {save_msg}")
                             _show_error(save_msg)
@@ -282,75 +378,84 @@ def render_streamrip_setup(
                 _render_download_folder_browser()
 
             with st.form(_k("form")):
-                st.write("Qobuz Credentials")
-                use_auth_token_cfg = st.checkbox(
-                    "Use auth token mode",
-                    key=_k("use_auth_token"),
-                )
-                cred_col1, cred_col2 = st.columns(2)
-                with cred_col1:
-                    email_or_userid_cfg = st.text_input(
-                        "Qobuz Email or User ID",
-                        key=_k("email_or_userid"),
+                credentials_tab, defaults_tab = st.tabs(["Credentials & Paths", "Streamrip Defaults"])
+                with credentials_tab:
+                    st.write("Qobuz Credentials")
+                    use_auth_token_cfg = st.checkbox(
+                        "Use auth token mode",
+                        key=_k("use_auth_token"),
+                        help="Enable token-based login for Streamrip. Recommended for Qobuz.",
                     )
-                with cred_col2:
-                    password_or_token_cfg = st.text_input(
-                        "Qobuz Password Hash or Auth Token",
-                        type="password",
-                        key=_k("password_or_token"),
-                    )
+                    cred_col1, cred_col2 = st.columns(2)
+                    with cred_col1:
+                        email_or_userid_cfg = st.text_input(
+                            "Qobuz Email or User ID",
+                            key=_k("email_or_userid"),
+                            help="Qobuz account email or user ID that Streamrip uses as account identifier.",
+                        )
+                    with cred_col2:
+                        password_or_token_cfg = st.text_input(
+                            "Qobuz Password Hash or Auth Token",
+                            type="password",
+                            key=_k("password_or_token"),
+                            help="Your Qobuz auth token (recommended) or password hash used by Streamrip.",
+                        )
 
-                cred_row2_col1, cred_row2_col2 = st.columns(2)
-                with cred_row2_col1:
-                    app_id_cfg = st.text_input(
-                        "Qobuz App ID",
-                        key=_k("app_id"),
-                    )
-                with cred_row2_col2:
-                    downloads_folder_cfg = st.text_input(
-                        "Downloads Folder Path",
-                        key=_k("downloads_folder_draft"),
-                        help="Leave as-is if you do not want to change your current streamrip downloads folder.",
-                    )
-                path_row_col1, path_row_col2 = st.columns(2)
-                with path_row_col1:
-                    downloads_db_path_cfg = st.text_input(
-                        "Downloads DB Path",
-                        key=_k("downloads_db_path_draft"),
-                        help="Defaults to `downloads.db` in the same folder as streamrip config.toml.",
-                    )
-                with path_row_col2:
-                    failed_downloads_path_cfg = st.text_input(
-                        "Failed Downloads Folder Path",
-                        key=_k("failed_downloads_path_draft"),
-                        help="Defaults to `failed/` in the same folder as streamrip config.toml.",
-                    )
+                    cred_row2_col1, cred_row2_col2 = st.columns(2)
+                    with cred_row2_col1:
+                        app_id_cfg = st.text_input(
+                            "Qobuz App ID",
+                            key=_k("app_id"),
+                            help="Optional Qobuz app ID. Needed for some account/token combinations.",
+                        )
+                    with cred_row2_col2:
+                        downloads_folder_cfg = st.text_input(
+                            "Downloads Folder Path",
+                            key=_k("downloads_folder_draft"),
+                            help="Main output folder where Streamrip writes downloaded releases.",
+                        )
+                    path_row_col1, path_row_col2 = st.columns(2)
+                    with path_row_col1:
+                        downloads_db_path_cfg = st.text_input(
+                            "Downloads DB Path",
+                            key=_k("downloads_db_path_draft"),
+                            help="Path to Streamrip's downloads database file (tracks already downloaded).",
+                        )
+                    with path_row_col2:
+                        failed_downloads_path_cfg = st.text_input(
+                            "Failed Downloads Folder Path",
+                            key=_k("failed_downloads_path_draft"),
+                            help="Folder used to record failed download attempts for troubleshooting/retry.",
+                        )
 
-                st.write("Streamrip Defaults")
-                defaults_col1, defaults_col2 = st.columns(2)
-                quality_widget_key = _k("cfg_quality")
-                if st.session_state.get(quality_widget_key) not in QUALITY_OPTIONS:
-                    st.session_state[quality_widget_key] = default_rip_quality
-                with defaults_col1:
-                    cfg_quality = st.selectbox(
-                        "Default Quality in streamrip config",
-                        options=QUALITY_OPTIONS,
-                        index=None,
-                        placeholder="Choose quality",
-                        format_func=format_quality_option,
-                        key=quality_widget_key,
-                    )
-                codec_widget_key = _k("cfg_codec")
-                if st.session_state.get(codec_widget_key) not in CODEC_OPTIONS:
-                    st.session_state[codec_widget_key] = default_codec
-                with defaults_col2:
-                    cfg_codec = st.selectbox(
-                        "Default Codec in streamrip config",
-                        options=CODEC_OPTIONS,
-                        index=None,
-                        placeholder="Choose codec",
-                        key=codec_widget_key,
-                    )
+                with defaults_tab:
+                    st.write("Streamrip Defaults")
+                    defaults_col1, defaults_col2 = st.columns(2)
+                    quality_widget_key = _k("cfg_quality")
+                    if st.session_state.get(quality_widget_key) not in QUALITY_OPTIONS:
+                        st.session_state[quality_widget_key] = default_rip_quality
+                    with defaults_col1:
+                        cfg_quality = st.selectbox(
+                            "Default Quality in streamrip config",
+                            options=QUALITY_OPTIONS,
+                            index=None,
+                            placeholder="Choose quality",
+                            format_func=format_quality_option,
+                            key=quality_widget_key,
+                            help="Default stream quality Streamrip will request when ripping.",
+                        )
+                    codec_widget_key = _k("cfg_codec")
+                    if st.session_state.get(codec_widget_key) not in CODEC_OPTIONS:
+                        st.session_state[codec_widget_key] = default_codec
+                    with defaults_col2:
+                        cfg_codec = st.selectbox(
+                            "Default Codec in streamrip config",
+                            options=CODEC_OPTIONS,
+                            index=None,
+                            placeholder="Choose codec",
+                            key=codec_widget_key,
+                            help="Default output codec conversion applied by Streamrip after download.",
+                        )
                 save_streamrip_btn = st.form_submit_button(
                     "Save Streamrip Config",
                     type="primary",
@@ -412,6 +517,12 @@ def render_streamrip_setup(
                     failed_downloads_path=normalized_failed_downloads_path,
                 )
                 if ok:
+                    env_updates: dict[str, str] = {}
+                    if str(password_or_token_cfg or "").strip():
+                        env_updates["QOBUZ_USER_AUTH_TOKEN"] = str(password_or_token_cfg).strip()
+                    if str(app_id_cfg or "").strip():
+                        env_updates["QOBUZ_APP_ID"] = str(app_id_cfg).strip()
+                    env_ok, env_msg = upsert_env_values(".env", env_updates)
                     _setup_debug("Streamrip config save succeeded from setup form; syncing session state.")
                     st.session_state.streamrip_downloads_folder_persist = normalized_downloads_path
                     st.session_state.streamrip_downloads_folder_draft = normalized_downloads_path
@@ -425,13 +536,22 @@ def render_streamrip_setup(
                     st.session_state.streamrip_form_quality = selected_quality
                     st.session_state.streamrip_form_codec = selected_codec
                     st.success(msg)
-                    st.rerun()
+                    if env_ok:
+                        st.rerun()
+                    else:
+                        _setup_debug(f"Streamrip config saved, but .env sync failed: {env_msg}")
+                        st.warning(f"Saved Streamrip config, but could not sync `.env`: {env_msg}")
                 else:
                     _setup_debug(f"Streamrip config save failed from setup form: {msg}")
                     _show_error(msg)
 
             with st.expander("Raw streamrip config", expanded=False):
-                show_config_secrets = st.checkbox("Show secrets", value=False, key=_k("show_secrets"))
+                show_config_secrets = st.checkbox(
+                    "Show secrets",
+                    value=False,
+                    key=_k("show_secrets"),
+                    help="Reveal sensitive values in raw config view. Keep disabled while screen sharing.",
+                )
                 if st.button("Load Raw Config", key=_k("load_raw_config")):
                     st.session_state[_k("show_raw_config_body")] = True
                 if st.session_state.get(_k("show_raw_config_body"), False):
@@ -441,6 +561,10 @@ def render_streamrip_setup(
             st.warning(
                 "Complete Streamrip setup before ripping: set Qobuz email/user ID, token/password, Downloads Folder Path, Downloads DB Path, and Failed Downloads Folder Path."
             )
+        focus_field_key = str(st.session_state.get("streamrip_setup_focus_field", "")).strip()
+        if focus_field_key:
+            _focus_field(focus_field_key)
+            st.session_state.streamrip_setup_focus_field = ""
 
 
 def _render_download_folder_browser() -> None:

@@ -115,15 +115,27 @@ def _collect_album_paths(single_path: str, multi_paths_text: str, uploaded_paths
     return unique_paths
 
 
-def render_smoked_salmon_tab(default_downloads_folder: str, locked: bool = False) -> None:
+def render_smoked_salmon_tab(
+    default_downloads_folder: str,
+    locked: bool = False,
+    show_settings: bool = True,
+    show_upload: bool = True,
+) -> None:
     _ui_salmon_debug(
         f"Rendering smoked-salmon tab. locked={locked}, default_downloads_folder_set={bool(default_downloads_folder)}."
     )
-    st.subheader("🐟 Smoked Salmon Upload")
-    st.caption(
-        "Upload already-downloaded folders with `smoked-salmon` (GitHub: "
-        "https://github.com/smokin-salmon/smoked-salmon)."
-    )
+    if show_upload and not show_settings:
+        st.subheader("🐟 Smoked Salmon Upload")
+        st.caption(
+            "Upload already-downloaded folders with `smoked-salmon` (GitHub: "
+            "https://github.com/smokin-salmon/smoked-salmon)."
+        )
+    elif show_settings and not show_upload:
+        st.subheader("⚙️ Smoked Salmon Settings")
+        st.caption("Manage setup, prompt behavior, and raw config for smoked-salmon.")
+    else:
+        st.subheader("🐟 Smoked Salmon")
+        st.caption("Upload and settings for smoked-salmon.")
     if locked:
         st.markdown(
             """
@@ -171,254 +183,281 @@ def render_smoked_salmon_tab(default_downloads_folder: str, locked: bool = False
     if "salmon_install_last_log_path" not in st.session_state:
         st.session_state.salmon_install_last_log_path = ""
 
-    with st.expander("⚙️ Smoked Salmon Settings", expanded=False):
-        source = st.selectbox(
-            "Release Source (-s)",
-            options=SALMON_SOURCE_OPTIONS,
-            index=SALMON_SOURCE_OPTIONS.index("WEB"),
-            key="salmon_source",
-            disabled=locked,
-        )
-        extra_args = st.text_input(
-            "Additional CLI args",
-            value="",
-            key="salmon_extra_args",
-            help="Optional flags appended to each `salmon up` command.",
-            disabled=locked,
-        )
-        st.caption("Install command: `uv tool install git+https://github.com/smokin-salmon/smoked-salmon`")
-        st.markdown("Prompt handling")
-        lossy_master_choice = st.selectbox(
-            "When prompted: Is this release lossy mastered?",
-            options=[
-                "Let salmon default",
-                "Yes",
-                "No",
-                "Reopen spectrals",
-                "Abort upload",
-                "Delete music folder",
-            ],
-            index=0,
-            key="salmon_lossy_master_choice",
-            disabled=locked,
-        )
-        lossy_master_comment = st.text_area(
-            "Lossy master comment (sent only when salmon asks for it)",
-            key="salmon_lossy_master_comment",
-            placeholder="Optional note shown in lossy approval report...",
-            height=90,
-            disabled=locked,
-        )
-        enable_ai_review = st.checkbox(
-            "Enable AI metadata review (auto-answer Yes when asked)",
-            key="salmon_enable_ai_review",
-            disabled=locked,
-        )
-        ai_api_key = st.text_input(
-            "AI API Key (required when AI review is enabled)",
-            key="salmon_ai_api_key",
-            type="password",
-            disabled=locked,
-        )
-        ai_followup_choice = st.selectbox(
-            "When AI suggests metadata updates",
-            options=[
-                "Keep original metadata",
-                "Apply suggestions",
-                "Prompt model and rerun",
-            ],
-            index=0,
-            key="salmon_ai_followup_choice",
-            disabled=locked,
-        )
-        ai_rerun_instruction = st.text_input(
-            "AI rerun instruction (used only for 'Prompt model and rerun')",
-            key="salmon_ai_rerun_instruction",
-            disabled=locked,
-        )
-        custom_prompt_rules = st.text_area(
-            "Custom prompt answers (one per line: prompt substring => answer)",
-            key="salmon_custom_prompt_rules",
-            height=160,
-            placeholder=(
-                "# Example\n"
-                "would you still like to upload? => y\n"
-                "what is the encoding of this release? [a]bort => LOSSLESS\n"
-                "are the above tags acceptable? => y\n"
-            ),
-            disabled=locked,
-        )
+    source = str(st.session_state.get("salmon_source", "WEB"))
+    if source not in SALMON_SOURCE_OPTIONS:
+        source = "WEB"
+    extra_args = str(st.session_state.get("salmon_extra_args", ""))
+    lossy_master_choice = str(st.session_state.get("salmon_lossy_master_choice", "Let salmon default"))
+    lossy_master_comment = str(st.session_state.get("salmon_lossy_master_comment", ""))
+    enable_ai_review = bool(st.session_state.get("salmon_enable_ai_review", False))
+    ai_api_key = str(st.session_state.get("salmon_ai_api_key", ""))
+    ai_followup_choice = str(st.session_state.get("salmon_ai_followup_choice", "Keep original metadata"))
+    ai_rerun_instruction = str(st.session_state.get("salmon_ai_rerun_instruction", ""))
+    custom_prompt_rules = str(st.session_state.get("salmon_custom_prompt_rules", ""))
 
-    with st.expander("🧪 Setup Assistant", expanded=True):
-        _ui_salmon_debug("Rendering setup assistant section.")
-        status = dict(st.session_state.salmon_setup_status or {})
-        st.session_state.salmon_setup_status = status
-        st.caption(
-            "Checks required CLI tools and smoked-salmon availability. "
-            "If setup is complete, uploads run immediately; if not, install is available."
-        )
-        st.caption(f"Detected config path: `{status.get('config_path', config_path)}`")
-
-        if status.get("ready"):
-            st.success("Setup looks ready: required tools + smoked-salmon are detected.")
-        else:
-            st.warning("Setup is incomplete.")
-            missing_tools = status.get("missing_required_tools", [])
-            if missing_tools:
-                st.error("Missing required tools: " + ", ".join(missing_tools))
-                hints = get_missing_tool_install_hints(missing_tools)
-                commands = hints.get("commands", [])
-                if commands:
-                    label = hints.get("platform_label", "this system")
-                    st.caption(f"Install command(s) for {label}:")
-                    for cmd in commands:
-                        st.code(cmd, language="bash" if os.name != "nt" else "powershell")
-            if not status.get("has_salmon"):
-                st.error("`salmon` command is not detected.")
-            if status.get("has_uv"):
-                st.info(f"Detected uv executable: `{status.get('uv_command', '')}`")
-            else:
-                st.info("`uv` is not detected. You can still click Install to get a full error log.")
-
-        setup_col1, setup_col2 = st.columns([1.1, 2.4])
-        with setup_col1:
-            refresh_setup = st.button("Refresh Setup Check", key="salmon_setup_refresh", disabled=locked)
-        with setup_col2:
-            install_salmon = st.button(
-                "Install smoked-salmon (auto-install uv if needed)",
-                key="salmon_install_btn",
-                type="primary",
+    if show_settings:
+        with st.expander("⚙️ Smoked Salmon Settings", expanded=True):
+            source = st.selectbox(
+                "Release Source (-s)",
+                options=SALMON_SOURCE_OPTIONS,
+                index=SALMON_SOURCE_OPTIONS.index(source),
+                key="salmon_source",
+                disabled=locked,
+            )
+            extra_args = st.text_input(
+                "Additional CLI args",
+                value=extra_args,
+                key="salmon_extra_args",
+                help="Optional flags appended to each `salmon up` command.",
+                disabled=locked,
+            )
+            st.caption("Install command: `uv tool install git+https://github.com/smokin-salmon/smoked-salmon`")
+            st.markdown("Prompt handling")
+            lossy_master_choice = st.selectbox(
+                "When prompted: Is this release lossy mastered?",
+                options=[
+                    "Let salmon default",
+                    "Yes",
+                    "No",
+                    "Reopen spectrals",
+                    "Abort upload",
+                    "Delete music folder",
+                ],
+                index=0,
+                key="salmon_lossy_master_choice",
+                disabled=locked,
+            )
+            lossy_master_comment = st.text_area(
+                "Lossy master comment (sent only when salmon asks for it)",
+                key="salmon_lossy_master_comment",
+                placeholder="Optional note shown in lossy approval report...",
+                height=90,
+                disabled=locked,
+            )
+            enable_ai_review = st.checkbox(
+                "Enable AI metadata review (auto-answer Yes when asked)",
+                key="salmon_enable_ai_review",
+                disabled=locked,
+            )
+            ai_api_key = st.text_input(
+                "AI API Key (required when AI review is enabled)",
+                key="salmon_ai_api_key",
+                type="password",
+                disabled=locked,
+            )
+            ai_followup_choice = st.selectbox(
+                "When AI suggests metadata updates",
+                options=[
+                    "Keep original metadata",
+                    "Apply suggestions",
+                    "Prompt model and rerun",
+                ],
+                index=0,
+                key="salmon_ai_followup_choice",
+                disabled=locked,
+            )
+            ai_rerun_instruction = st.text_input(
+                "AI rerun instruction (used only for 'Prompt model and rerun')",
+                key="salmon_ai_rerun_instruction",
+                disabled=locked,
+            )
+            custom_prompt_rules = st.text_area(
+                "Custom prompt answers (one per line: prompt substring => answer)",
+                key="salmon_custom_prompt_rules",
+                height=160,
+                placeholder=(
+                    "# Example\n"
+                    "would you still like to upload? => y\n"
+                    "what is the encoding of this release? [a]bort => LOSSLESS\n"
+                    "are the above tags acceptable? => y\n"
+                ),
                 disabled=locked,
             )
 
-        if refresh_setup:
-            _ui_salmon_debug("Setup assistant: refresh setup clicked.")
-            st.session_state.salmon_setup_status = check_smoked_salmon_setup()
-            st.rerun()
+    if show_settings:
+        with st.expander("🧪 Setup Assistant", expanded=True):
+            _ui_salmon_debug("Rendering setup assistant section.")
+            status = dict(st.session_state.salmon_setup_status or {})
+            st.session_state.salmon_setup_status = status
+            st.caption(
+                "Checks required CLI tools and smoked-salmon availability. "
+                "If setup is complete, uploads run immediately; if not, install is available."
+            )
+            st.caption(f"Detected config path: `{status.get('config_path', config_path)}`")
 
-        if install_salmon:
-            _ui_salmon_debug("Setup assistant: install smoked-salmon clicked.")
-            install_live_caption = st.empty()
-            install_live_box = st.empty()
-
-            def _update_install_log(log_path: str, tail_text: str) -> None:
-                install_live_caption.caption(f"Live install log: {log_path}")
-                install_live_box.code(tail_text or "(waiting for install output...)", language="text")
-
-            with st.spinner("Installing smoked-salmon via uv..."):
-                ok, msg, log_path = install_smoked_salmon_with_uv(progress_callback=_update_install_log)
-            _ui_salmon_debug(f"Install action finished. ok={ok}, log_path=`{log_path}`.")
-            _update_install_log(log_path, _read_log_tail(log_path))
-            st.session_state.salmon_install_last_level = "success" if ok else "error"
-            st.session_state.salmon_install_last_message = msg
-            st.session_state.salmon_install_last_log_path = log_path
-            st.session_state.salmon_setup_status = check_smoked_salmon_setup()
-            st.rerun()
-
-        if st.session_state.salmon_install_last_message:
-            if st.session_state.salmon_install_last_level == "success":
-                st.success(st.session_state.salmon_install_last_message)
+            if status.get("ready"):
+                st.success("Setup looks ready: required tools + smoked-salmon are detected.")
             else:
-                st.error(st.session_state.salmon_install_last_message)
-        if (
-            st.session_state.salmon_install_last_log_path
-            and os.path.exists(st.session_state.salmon_install_last_log_path)
-        ):
-            with open(st.session_state.salmon_install_last_log_path, "r", encoding="utf-8") as f:
-                install_log_text = f.read()
-            st.download_button(
-                "Download Last Install Log",
-                data=install_log_text,
-                file_name="smoked_salmon_install_last.log",
-                mime="text/plain",
-                key="salmon_install_log_download",
+                st.warning("Setup is incomplete.")
+                missing_tools = status.get("missing_required_tools", [])
+                if missing_tools:
+                    st.error("Missing required tools: " + ", ".join(missing_tools))
+                    hints = get_missing_tool_install_hints(missing_tools)
+                    commands = hints.get("commands", [])
+                    if commands:
+                        label = hints.get("platform_label", "this system")
+                        st.caption(f"Install command(s) for {label}:")
+                        for cmd in commands:
+                            st.code(cmd, language="bash" if os.name != "nt" else "powershell")
+                if not status.get("has_salmon"):
+                    st.error("`salmon` command is not detected.")
+                if status.get("has_uv"):
+                    st.info(f"Detected uv executable: `{status.get('uv_command', '')}`")
+                else:
+                    st.info("`uv` is not detected. You can still click Install to get a full error log.")
+
+            setup_col1, setup_col2 = st.columns([1.1, 2.4])
+            with setup_col1:
+                refresh_setup = st.button("Refresh Setup Check", key="salmon_setup_refresh", disabled=locked)
+            with setup_col2:
+                install_salmon = st.button(
+                    "Install smoked-salmon (auto-install uv if needed)",
+                    key="salmon_install_btn",
+                    type="primary",
+                    disabled=locked,
+                )
+
+            if refresh_setup:
+                _ui_salmon_debug("Setup assistant: refresh setup clicked.")
+                st.session_state.salmon_setup_status = check_smoked_salmon_setup()
+                st.rerun()
+
+            if install_salmon:
+                _ui_salmon_debug("Setup assistant: install smoked-salmon clicked.")
+                install_live_caption = st.empty()
+                install_live_box = st.empty()
+
+                def _update_install_log(log_path: str, tail_text: str) -> None:
+                    install_live_caption.caption(f"Live install log: {log_path}")
+                    install_live_box.code(tail_text or "(waiting for install output...)", language="text")
+
+                with st.spinner("Installing smoked-salmon via uv..."):
+                    ok, msg, log_path = install_smoked_salmon_with_uv(progress_callback=_update_install_log)
+                _ui_salmon_debug(f"Install action finished. ok={ok}, log_path=`{log_path}`.")
+                _update_install_log(log_path, _read_log_tail(log_path))
+                st.session_state.salmon_install_last_level = "success" if ok else "error"
+                st.session_state.salmon_install_last_message = msg
+                st.session_state.salmon_install_last_log_path = log_path
+                st.session_state.salmon_setup_status = check_smoked_salmon_setup()
+                st.rerun()
+
+            if st.session_state.salmon_install_last_message:
+                if st.session_state.salmon_install_last_level == "success":
+                    st.success(st.session_state.salmon_install_last_message)
+                else:
+                    st.error(st.session_state.salmon_install_last_message)
+            if (
+                st.session_state.salmon_install_last_log_path
+                and os.path.exists(st.session_state.salmon_install_last_log_path)
+            ):
+                with open(st.session_state.salmon_install_last_log_path, "r", encoding="utf-8") as f:
+                    install_log_text = f.read()
+                st.download_button(
+                    "Download Last Install Log",
+                    data=install_log_text,
+                    file_name="smoked_salmon_install_last.log",
+                    mime="text/plain",
+                    key="salmon_install_log_download",
+                    disabled=locked,
+                )
+
+    if show_settings:
+        with st.expander("🧩 Smoked Salmon Config (config.toml)", expanded=False):
+            _ui_salmon_debug("Rendering smoked-salmon config editor section.")
+            st.caption(f"Config path: `{config_path}`")
+            cfg_col1, cfg_col2, cfg_col3 = st.columns([1.2, 1.2, 2.6])
+            with cfg_col1:
+                reload_cfg = st.button("Reload Config", key="salmon_cfg_reload", disabled=locked)
+            with cfg_col2:
+                save_cfg = st.button("Save Config", key="salmon_cfg_save", type="primary", disabled=locked)
+            with cfg_col3:
+                st.caption("Edit raw TOML config text below.")
+
+            if reload_cfg:
+                _ui_salmon_debug("Config editor: reload clicked.")
+                st.session_state.salmon_cfg_text = read_smoked_salmon_config_text(config_path)
+                st.rerun()
+            if save_cfg:
+                _ui_salmon_debug("Config editor: save clicked.")
+                ok, msg = save_smoked_salmon_config_text(config_path, st.session_state.salmon_cfg_text)
+                if ok:
+                    _ui_salmon_debug("Config editor save succeeded.")
+                    st.success(msg)
+                else:
+                    _ui_salmon_debug(f"Config editor save failed: {msg}")
+                    st.error(msg)
+
+            st.text_area(
+                "config.toml",
+                key="salmon_cfg_text",
+                height=360,
+                help="Any valid smoked-salmon TOML config is accepted.",
                 disabled=locked,
             )
 
-    with st.expander("🧩 Smoked Salmon Config (config.toml)", expanded=False):
-        _ui_salmon_debug("Rendering smoked-salmon config editor section.")
-        st.caption(f"Config path: `{config_path}`")
-        cfg_col1, cfg_col2, cfg_col3 = st.columns([1.2, 1.2, 2.6])
-        with cfg_col1:
-            reload_cfg = st.button("Reload Config", key="salmon_cfg_reload", disabled=locked)
-        with cfg_col2:
-            save_cfg = st.button("Save Config", key="salmon_cfg_save", type="primary", disabled=locked)
-        with cfg_col3:
-            st.caption("Edit raw TOML config text below.")
+            st.markdown("Quick actions")
+            act_col1, act_col2, act_col3 = st.columns(3)
+            with act_col1:
+                run_health = st.button("Run `salmon health`", key="salmon_health_btn", disabled=locked)
+            with act_col2:
+                run_checkconf = st.button("Run `salmon checkconf`", key="salmon_checkconf_btn", disabled=locked)
+            with act_col3:
+                run_migrate = st.button("Run `salmon migrate`", key="salmon_migrate_btn", disabled=locked)
 
-        if reload_cfg:
-            _ui_salmon_debug("Config editor: reload clicked.")
-            st.session_state.salmon_cfg_text = read_smoked_salmon_config_text(config_path)
+            chosen_cmd = ""
+            if run_health:
+                chosen_cmd = "health"
+            elif run_checkconf:
+                chosen_cmd = "checkconf"
+            elif run_migrate:
+                chosen_cmd = "migrate"
+
+            if chosen_cmd:
+                _ui_salmon_debug(f"Quick action command triggered: `{chosen_cmd}`.")
+                cmd_live_caption = st.empty()
+                cmd_live_box = st.empty()
+
+                def _update_cmd_log(log_path: str, tail_text: str) -> None:
+                    cmd_live_caption.caption(f"Live smoked-salmon command log: {log_path}")
+                    cmd_live_box.code(tail_text or "(waiting for command output...)", language="text")
+
+                with st.spinner(f"Running `salmon {chosen_cmd}`..."):
+                    ok, msg, log_path = run_smoked_salmon_command(chosen_cmd, progress_callback=_update_cmd_log)
+                _ui_salmon_debug(f"Quick command finished. ok={ok}, log_path=`{log_path}`.")
+                _update_cmd_log(log_path, _read_log_tail(log_path))
+                st.session_state.salmon_cmd_last_level = "success" if ok else "error"
+                st.session_state.salmon_cmd_last_message = msg
+                st.session_state.salmon_cmd_last_log_path = log_path
+                st.rerun()
+
+            if st.session_state.salmon_cmd_last_message:
+                if st.session_state.salmon_cmd_last_level == "success":
+                    st.success(st.session_state.salmon_cmd_last_message)
+                else:
+                    st.error(st.session_state.salmon_cmd_last_message)
+            if st.session_state.salmon_cmd_last_log_path and os.path.exists(st.session_state.salmon_cmd_last_log_path):
+                with open(st.session_state.salmon_cmd_last_log_path, "r", encoding="utf-8") as f:
+                    cmd_log_text = f.read()
+                st.download_button(
+                    "Download Last Command Log",
+                    data=cmd_log_text,
+                    file_name="smoked_salmon_command_last.log",
+                    mime="text/plain",
+                    key="salmon_cmd_log_download",
+                    disabled=locked,
+                )
+
+    if not show_upload:
+        return
+
+    status = dict(st.session_state.salmon_setup_status or {})
+    setup_ready = bool(status.get("ready", False))
+    upload_actions_disabled = locked or (not setup_ready)
+    if not setup_ready:
+        st.warning("Actions in this tab are disabled until Smoked Salmon setup is complete.")
+        if st.button("Open Smoked Salmon Settings Tab", key="salmon_open_settings_tab"):
+            st.session_state.main_tab_selection_pending = "Smoked Salmon Settings"
             st.rerun()
-        if save_cfg:
-            _ui_salmon_debug("Config editor: save clicked.")
-            ok, msg = save_smoked_salmon_config_text(config_path, st.session_state.salmon_cfg_text)
-            if ok:
-                _ui_salmon_debug("Config editor save succeeded.")
-                st.success(msg)
-            else:
-                _ui_salmon_debug(f"Config editor save failed: {msg}")
-                st.error(msg)
-
-        st.text_area(
-            "config.toml",
-            key="salmon_cfg_text",
-            height=360,
-            help="Any valid smoked-salmon TOML config is accepted.",
-            disabled=locked,
-        )
-
-        st.markdown("Quick actions")
-        act_col1, act_col2, act_col3 = st.columns(3)
-        with act_col1:
-            run_health = st.button("Run `salmon health`", key="salmon_health_btn", disabled=locked)
-        with act_col2:
-            run_checkconf = st.button("Run `salmon checkconf`", key="salmon_checkconf_btn", disabled=locked)
-        with act_col3:
-            run_migrate = st.button("Run `salmon migrate`", key="salmon_migrate_btn", disabled=locked)
-
-        chosen_cmd = ""
-        if run_health:
-            chosen_cmd = "health"
-        elif run_checkconf:
-            chosen_cmd = "checkconf"
-        elif run_migrate:
-            chosen_cmd = "migrate"
-
-        if chosen_cmd:
-            _ui_salmon_debug(f"Quick action command triggered: `{chosen_cmd}`.")
-            cmd_live_caption = st.empty()
-            cmd_live_box = st.empty()
-
-            def _update_cmd_log(log_path: str, tail_text: str) -> None:
-                cmd_live_caption.caption(f"Live smoked-salmon command log: {log_path}")
-                cmd_live_box.code(tail_text or "(waiting for command output...)", language="text")
-
-            with st.spinner(f"Running `salmon {chosen_cmd}`..."):
-                ok, msg, log_path = run_smoked_salmon_command(chosen_cmd, progress_callback=_update_cmd_log)
-            _ui_salmon_debug(f"Quick command finished. ok={ok}, log_path=`{log_path}`.")
-            _update_cmd_log(log_path, _read_log_tail(log_path))
-            st.session_state.salmon_cmd_last_level = "success" if ok else "error"
-            st.session_state.salmon_cmd_last_message = msg
-            st.session_state.salmon_cmd_last_log_path = log_path
-            st.rerun()
-
-        if st.session_state.salmon_cmd_last_message:
-            if st.session_state.salmon_cmd_last_level == "success":
-                st.success(st.session_state.salmon_cmd_last_message)
-            else:
-                st.error(st.session_state.salmon_cmd_last_message)
-        if st.session_state.salmon_cmd_last_log_path and os.path.exists(st.session_state.salmon_cmd_last_log_path):
-            with open(st.session_state.salmon_cmd_last_log_path, "r", encoding="utf-8") as f:
-                cmd_log_text = f.read()
-            st.download_button(
-                "Download Last Command Log",
-                data=cmd_log_text,
-                file_name="smoked_salmon_command_last.log",
-                mime="text/plain",
-                key="salmon_cmd_log_download",
-                disabled=locked,
-            )
 
     if "salmon_last_level" not in st.session_state:
         st.session_state.salmon_last_level = ""
@@ -455,7 +494,7 @@ def render_smoked_salmon_tab(default_downloads_folder: str, locked: bool = False
         "Run Smoked Salmon Upload",
         type="primary",
         key="salmon_run_btn",
-        disabled=locked,
+        disabled=upload_actions_disabled,
     )
     if run_salmon_btn:
         _ui_salmon_debug("Run smoked-salmon upload button clicked.")

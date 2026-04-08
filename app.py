@@ -1,4 +1,6 @@
 import os
+import time
+from datetime import datetime, timezone
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -9,6 +11,7 @@ from app_modules.streamrip import (
     CODEC_OPTIONS,
     QUALITY_OPTIONS,
     ensure_streamrip_config_file,
+    fetch_qobuz_account_info,
     format_quality_option,
     get_default_downloads_folder,
     get_env_qobuz_values,
@@ -130,6 +133,21 @@ init_session_state()
 init_qobuz_help_state()
 _mount_env_watchdog()
 
+MAIN_TABS = [
+    "Bandcamp Matcher",
+    "Direct Qobuz Rip",
+    "Smoked Salmon Upload",
+    "Smoked Salmon Settings",
+    "Qobuz Settings",
+    "Streamrip Settings",
+]
+
+
+def _apply_pending_main_tab_redirect() -> None:
+    pending_target = str(st.session_state.pop("main_tab_selection_pending", "")).strip()
+    if pending_target and pending_target in MAIN_TABS:
+        st.session_state.main_tab_selection = pending_target
+
 st.markdown(
     """
 <style>
@@ -162,17 +180,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+_apply_pending_main_tab_redirect()
+
 main_tab = st.radio(
     "Main Tab",
-    options=["Bandcamp Matcher", "Direct Qobuz Rip", "Smoked Salmon Upload"],
+    options=MAIN_TABS,
     key="main_tab_selection",
     horizontal=True,
     label_visibility="collapsed",
 )
 _app_debug(f"Main tab selected: `{main_tab}`.")
-
-st.sidebar.header("Configuration")
-_app_debug("Sidebar: Configuration header rendered.")
 
 tag_input = ""
 exclude_tag_input = ""
@@ -186,7 +203,41 @@ end_date = None
 free_mode = "All"
 dry_run = False
 
+def _open_env_for_qobuz() -> None:
+    env_path = ".env"
+    if not os.path.exists(env_path):
+        template = """# Important: So that Python recognizes local directories (e.g., logic) as modules
+PYTHONPATH=.
+# Optional: Set your own Qobuz App ID (if omitted, the app auto-fetches it from Qobuz Web Player)
+# QOBUZ_APP_ID=
+# Required (depending on region/account type): Set your user Auth Token for Qobuz
+QOBUZ_USER_AUTH_TOKEN=
+# Tracker API Keys or Session Cookies for duplicate checking
+RED_API_KEY=
+RED_SESSION_COOKIE=
+OPS_API_KEY=
+OPS_SESSION_COOKIE="""
+        try:
+            with open(env_path, "w", encoding="utf-8") as f:
+                f.write(template)
+        except Exception as e:
+            _app_debug(f"Failed creating .env template file: {e}")
+            st.session_state.auto_scroll_alerts_once = True
+            st.error(f"Error creating the .env file: {e}")
+            return
+
+    try:
+        open_in_default_app(env_path)
+        _app_debug("Opened .env in default app.")
+    except Exception as e:
+        _app_debug(f"Failed opening .env in default app: {e}")
+        st.session_state.auto_scroll_alerts_once = True
+        st.error(f"Could not open .env: {e}")
+
+
 if main_tab == "Bandcamp Matcher":
+    st.sidebar.header("Configuration")
+    _app_debug("Sidebar: Configuration header rendered.")
     _app_debug("Sidebar: rendering matcher filter/date/run settings.")
     with st.sidebar.expander("🎯 Matcher Filter Rules", expanded=False):
         tag_input = st.text_input("Include Genre / Tag", value="", help="Filter by tag or genre. Separate multiple with commas (e.g. 'rock, jazz').")
@@ -202,7 +253,7 @@ if main_tab == "Bandcamp Matcher":
         end_date = st.date_input("End Date", value=None, help="Filter for releases on or before this date.")
 
     with st.sidebar.expander("⚙️ Matcher Run Settings", expanded=True):
-        free_mode = st.selectbox("Pricing", options=["All", "Free", "Paid"], index=0)
+        free_mode = st.selectbox("Pricing", options=["All", "Free", "Paid"], index=0, help="Filter releases by Bandcamp pricing type.")
         dry_run = st.checkbox("Dry Run", value=False, help="Only apply Bandcamp filter, skip Qobuz search.")
         red_key = os.getenv("RED_API_KEY", "")
         ops_key = os.getenv("OPS_API_KEY", "")
@@ -213,46 +264,20 @@ if main_tab == "Bandcamp Matcher":
         if ops_key:
             check_ops = st.checkbox("Check OPS", value=False, help="Check Qobuz matches against Orpheus (OPS) for duplicates.")
 
-if main_tab in {"Bandcamp Matcher", "Direct Qobuz Rip"}:
-    _app_debug("Sidebar: rendering Qobuz Token section.")
-    with st.sidebar.expander("🔐 Qobuz Token", expanded=(main_tab in {"Bandcamp Matcher", "Direct Qobuz Rip"})):
-        open_env_btn = st.button("📝 Open .env for Qobuz Token", use_container_width=True)
-        qobuz_help_btn = st.button("Get Qobuz Token", use_container_width=True)
-
-        if open_env_btn:
-            _app_debug("Sidebar action: Open .env button clicked.")
-            env_path = ".env"
-            if not os.path.exists(env_path):
-                template = """# Important: So that Python recognizes local directories (e.g., logic) as modules
-PYTHONPATH=.
-# Optional: Set your own Qobuz App ID (if omitted, the app auto-fetches it from Qobuz Web Player)
-# QOBUZ_APP_ID=
-# Required (depending on region/account type): Set your user Auth Token for Qobuz
-QOBUZ_USER_AUTH_TOKEN=
-# Tracker API Keys or Session Cookies for duplicate checking
-RED_API_KEY=
-RED_SESSION_COOKIE=
-OPS_API_KEY=
-OPS_SESSION_COOKIE="""
-                try:
-                    with open(env_path, "w", encoding="utf-8") as f:
-                        f.write(template)
-                except Exception as e:
-                    _app_debug(f"Failed creating .env template file: {e}")
-                    st.session_state.auto_scroll_alerts_once = True
-                    st.error(f"Error creating the .env file: {e}")
-
-            try:
-                open_in_default_app(env_path)
-                _app_debug("Opened .env in default app.")
-            except Exception as e:
-                _app_debug(f"Failed opening .env in default app: {e}")
-                st.session_state.auto_scroll_alerts_once = True
-                st.error(f"Could not open .env: {e}")
-
-        if qobuz_help_btn:
-            _app_debug("Sidebar action: Get Qobuz Token button clicked.")
-            open_qobuz_help_modal()
+if main_tab in {"Qobuz Settings", "Streamrip Settings", "Smoked Salmon Settings"}:
+    st.sidebar.header("Configuration")
+    _app_debug("Sidebar: Configuration header rendered for settings tab.")
+    with st.sidebar.expander("⚙️ Settings Navigation", expanded=True):
+        st.caption("Quickly jump between settings pages.")
+        if st.button("Open Qobuz Settings", key="sidebar_open_qobuz_settings"):
+            st.session_state.main_tab_selection_pending = "Qobuz Settings"
+            st.rerun()
+        if st.button("Open Streamrip Settings", key="sidebar_open_streamrip_settings"):
+            st.session_state.main_tab_selection_pending = "Streamrip Settings"
+            st.rerun()
+        if st.button("Open Smoked Salmon Settings", key="sidebar_open_smoked_settings"):
+            st.session_state.main_tab_selection_pending = "Smoked Salmon Settings"
+            st.rerun()
 
     with st.sidebar.expander("🛠️ Tracker Debugger", expanded=False):
         st.caption("Manually test duplicate checks for RED/OPS.")
@@ -290,7 +315,10 @@ def _load_streamrip_runtime_state(
 
     if status_callback:
         status_callback("Reading .env and resolving Qobuz token/App ID...")
-    qobuz_app_id, qobuz_token = get_env_qobuz_values(status_callback=status_callback)
+    qobuz_app_id, qobuz_token = get_env_qobuz_values(
+        status_callback=status_callback,
+        fallback_app_id=str(settings.get("app_id", "")).strip(),
+    )
     _app_debug(
         "Streamrip runtime state loaded "
         f"(config_ready={config_ready}, settings_loaded={bool(settings)}, "
@@ -307,16 +335,37 @@ def _load_streamrip_runtime_state(
     )
 
 
+def _make_streamrip_boot_status_callback(streamrip_boot_status):
+    # Throttle very chatty discovery updates so the status label stays readable.
+    last = {"message": "", "emit_at": 0.0}
+
+    def _update(message: str) -> None:
+        text = str(message or "").strip()
+        if not text:
+            return
+        now = time.monotonic()
+        if text == last["message"] and (now - float(last["emit_at"])) < 1.0:
+            return
+        if (now - float(last["emit_at"])) < 0.2:
+            return
+        last["message"] = text
+        last["emit_at"] = now
+        streamrip_boot_status.update(label=f"Streamrip setup: {text}", state="running")
+
+    return _update
+
+
 @st.cache_data(show_spinner=False)
 def _load_streamrip_runtime_state_cached(
     env_mtime_ns: int,
     config_path_hint: str,
     config_mtime_ns: int,
+    _status_callback=None,
 ) -> tuple[str, bool, str, dict, str, str, str]:
     # Cache key is fully represented by function args; values are intentionally unused.
     _ = (env_mtime_ns, config_path_hint, config_mtime_ns)
     _app_debug("Loading streamrip runtime state via process cache.")
-    return _load_streamrip_runtime_state()
+    return _load_streamrip_runtime_state(status_callback=_status_callback)
 
 
 @st.cache_resource
@@ -407,6 +456,74 @@ def _streamrip_runtime_cache_is_stale(cache: dict) -> bool:
     return (cached_env_mtime != current_env_mtime) or (cached_config_mtime != current_config_mtime)
 
 
+def _parse_utc_datetime(value: str) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    candidates = [raw]
+    if raw.endswith("Z"):
+        candidates.append(f"{raw[:-1]}+00:00")
+    for candidate in candidates:
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _qobuz_account_days_until_expiry(expires_at_iso: str) -> int | None:
+    expires_at = _parse_utc_datetime(expires_at_iso)
+    if expires_at is None:
+        return None
+    seconds_left = (expires_at - datetime.now(timezone.utc)).total_seconds()
+    return int(seconds_left // 86400)
+
+
+def _token_fingerprint(token: str) -> str:
+    token = str(token or "")
+    if not token:
+        return ""
+    return f"{len(token)}:{token[-6:]}"
+
+
+def _pick_streamrip_identifier_from_account(account_data: dict, fallback: str = "") -> str:
+    if not isinstance(account_data, dict):
+        return str(fallback or "").strip()
+    for key in ("user_id", "identifier", "login", "email"):
+        candidate = str(account_data.get(key, "")).strip()
+        if candidate:
+            return candidate
+    return str(fallback or "").strip()
+
+
+def _should_refresh_qobuz_account_info(cache: dict, app_id: str, token: str) -> bool:
+    if not isinstance(cache, dict) or not cache:
+        return True
+    if str(cache.get("app_id", "")) != str(app_id):
+        return True
+    if str(cache.get("token_fingerprint", "")) != _token_fingerprint(token):
+        return True
+
+    fetched_at = _parse_utc_datetime(str(cache.get("fetched_at", "")))
+    if fetched_at is None:
+        return True
+
+    ok = bool(cache.get("ok", False))
+    today = datetime.now(timezone.utc).date()
+    if not ok:
+        return fetched_at.date() != today
+
+    days_left = _qobuz_account_days_until_expiry(str(cache.get("subscription_expires_at", "")))
+    if days_left is None:
+        return False
+    if days_left > 7:
+        return False
+    return fetched_at.date() != today
+
+
 cached_streamrip_state = st.session_state.get("streamrip_runtime_state")
 
 if not isinstance(cached_streamrip_state, dict):
@@ -416,9 +533,11 @@ if not isinstance(cached_streamrip_state, dict):
     config_mtime_ns = _get_file_mtime_ns(initial_config_path)
     with st.status("Starting Streamrip setup...", expanded=False) as streamrip_boot_status:
         streamrip_boot_status.update(label="Resolving Streamrip runtime state...", state="running")
+        boot_status_callback = _make_streamrip_boot_status_callback(streamrip_boot_status)
         cached_snapshot = _read_streamrip_runtime_snapshot(env_mtime_ns, config_mtime_ns)
         if cached_snapshot is not None:
             _app_debug("Restoring streamrip runtime state from snapshot cache.")
+            streamrip_boot_status.update(label="Restoring Streamrip runtime state from cache...", state="running")
             (
                 streamrip_config_path,
                 streamrip_config_ready,
@@ -441,6 +560,7 @@ if not isinstance(cached_streamrip_state, dict):
                 env_mtime_ns,
                 initial_config_path,
                 config_mtime_ns,
+                _status_callback=boot_status_callback,
             )
         streamrip_boot_status.update(label="Streamrip setup ready.", state="complete")
     _cache_streamrip_runtime_state(
@@ -483,40 +603,80 @@ else:
         env_qobuz_app_id = str(cached_streamrip_state.get("qobuz_app_id", ""))
         env_qobuz_token = str(cached_streamrip_state.get("qobuz_token", ""))
 
-if streamrip_config_ready and streamrip_settings and env_qobuz_token:
-    needs_token = not str(streamrip_settings.get("password_or_token", "")).strip()
-    needs_app_id = bool(env_qobuz_app_id) and not str(streamrip_settings.get("app_id", "")).strip()
-    if needs_token or needs_app_id:
-        _app_debug(
-            "Applying env token/app-id into streamrip config due to missing saved values "
-            f"(needs_token={needs_token}, needs_app_id={needs_app_id})."
-        )
-        _ok, _msg = save_streamrip_settings(
-            streamrip_config_path,
-            use_auth_token=True,
-            email_or_userid=str(streamrip_settings.get("email_or_userid", "")),
-            password_or_token=env_qobuz_token,
-            app_id=env_qobuz_app_id or str(streamrip_settings.get("app_id", "")),
-            quality=int(streamrip_settings.get("quality", 3)),
-            codec_selection=str(streamrip_settings.get("codec_selection", "Original")),
-            downloads_folder=str(streamrip_settings.get("downloads_folder", "")),
-            downloads_db_path=str(streamrip_settings.get("downloads_db_path", "")),
-            failed_downloads_path=str(streamrip_settings.get("failed_downloads_path", "")),
-        )
-        if _ok:
-            _app_debug("Env token/app-id sync to streamrip config succeeded.")
-            streamrip_settings, streamrip_settings_error = load_streamrip_settings(streamrip_config_path)
-            _cache_streamrip_runtime_state(
-                streamrip_config_path,
-                streamrip_config_ready,
-                streamrip_config_init_msg,
-                streamrip_settings,
-                streamrip_settings_error,
-                env_qobuz_app_id,
-                env_qobuz_token,
-            )
+if streamrip_config_ready and streamrip_settings:
+    current_streamrip_token = str(streamrip_settings.get("password_or_token", "")).strip()
+    current_streamrip_app_id = str(streamrip_settings.get("app_id", "")).strip()
+    current_streamrip_identifier = str(streamrip_settings.get("email_or_userid", "")).strip()
+    active_qobuz_app_id = current_streamrip_app_id or str(env_qobuz_app_id or "").strip()
+
+    env_mtime_ns = _get_env_mtime_ns(".env")
+    config_mtime_ns = _get_file_mtime_ns(streamrip_config_path)
+    env_token_newer_than_streamrip = bool(
+        str(env_qobuz_token or "").strip()
+        and str(env_qobuz_token or "").strip() != current_streamrip_token
+        and env_mtime_ns > config_mtime_ns
+    )
+    env_sync_marker = (
+        f"{env_mtime_ns}:{_token_fingerprint(env_qobuz_token)}:{_token_fingerprint(active_qobuz_app_id)}"
+    )
+    env_sync_marker_key = "qobuz_env_token_sync_marker"
+    already_processed_marker = str(st.session_state.get(env_sync_marker_key, ""))
+    should_attempt_env_sync = env_token_newer_than_streamrip and (already_processed_marker != env_sync_marker)
+
+    if should_attempt_env_sync:
+        _app_debug("Detected newer .env token than streamrip config; validating and auto-filling from /user/login.")
+        st.session_state[env_sync_marker_key] = env_sync_marker
+        remember_session_snapshot_value(env_sync_marker_key, env_sync_marker)
+        if not active_qobuz_app_id:
+            _app_debug("Skipped newer env token sync because no app ID is available.")
         else:
-            _app_debug(f"Env token/app-id sync to streamrip config failed: {_msg}")
+            ok_info, info_data, info_msg = fetch_qobuz_account_info(active_qobuz_app_id, env_qobuz_token)
+            if ok_info:
+                resolved_identifier = _pick_streamrip_identifier_from_account(info_data, current_streamrip_identifier)
+                save_ok, save_msg = save_streamrip_settings(
+                    streamrip_config_path,
+                    use_auth_token=True,
+                    email_or_userid=resolved_identifier,
+                    password_or_token=env_qobuz_token,
+                    app_id=active_qobuz_app_id,
+                    quality=int(streamrip_settings.get("quality", 3)),
+                    codec_selection=str(streamrip_settings.get("codec_selection", "Original")),
+                    downloads_folder=str(streamrip_settings.get("downloads_folder", "")),
+                    downloads_db_path=str(streamrip_settings.get("downloads_db_path", "")),
+                    failed_downloads_path=str(streamrip_settings.get("failed_downloads_path", "")),
+                )
+                if save_ok:
+                    _app_debug("Newer env token sync succeeded; streamrip credentials auto-filled from Qobuz login payload.")
+                    st.session_state.qobuz_autofill_notice = (
+                        "Detected a newer token in `.env`. Verified it with Qobuz and auto-filled Streamrip "
+                        f"credentials (token, App ID, identifier: `{resolved_identifier}`)."
+                    )
+                    remember_session_snapshot_value("qobuz_autofill_notice", st.session_state.qobuz_autofill_notice)
+                    normalized_cache = {
+                        "ok": True,
+                        "message": str(info_msg or ""),
+                        "app_id": str(active_qobuz_app_id),
+                        "token_fingerprint": _token_fingerprint(env_qobuz_token),
+                        "fetched_at": datetime.now(timezone.utc).isoformat(),
+                        "data": dict(info_data or {}),
+                        "subscription_expires_at": str(info_data.get("subscription_expires_at", "")),
+                    }
+                    st.session_state["qobuz_account_info_cache"] = normalized_cache
+                    remember_session_snapshot_value("qobuz_account_info_cache", normalized_cache)
+                    streamrip_settings, streamrip_settings_error = load_streamrip_settings(streamrip_config_path)
+                    _cache_streamrip_runtime_state(
+                        streamrip_config_path,
+                        streamrip_config_ready,
+                        streamrip_config_init_msg,
+                        streamrip_settings,
+                        streamrip_settings_error,
+                        env_qobuz_app_id,
+                        env_qobuz_token,
+                    )
+                else:
+                    _app_debug(f"Newer env token sync save failed: {save_msg}")
+            else:
+                _app_debug(f"Newer env token validation failed; streamrip config not changed. reason={info_msg}")
 
 if main_tab in {"Bandcamp Matcher", "Direct Qobuz Rip"}:
     if streamrip_config_init_msg:
@@ -543,48 +703,46 @@ init_streamrip_form_state(
     streamrip_config_path=streamrip_config_path,
 )
 
-rip_quality = default_rip_quality
-rip_codec = default_codec
-if main_tab in {"Bandcamp Matcher", "Direct Qobuz Rip"}:
-    _app_debug("Sidebar: rendering Streamrip Settings section.")
-    with st.sidebar.expander("⚙️ Streamrip Settings", expanded=(main_tab == "Direct Qobuz Rip")):
-        rip_quality = st.selectbox(
-            "Rip Quality",
-            options=QUALITY_OPTIONS,
-            index=QUALITY_OPTIONS.index(default_rip_quality),
-            format_func=format_quality_option,
-            help="Applied to rip commands (equivalent to --quality).",
-        )
-        rip_codec = st.selectbox(
-            "Rip Codec",
-            options=CODEC_OPTIONS,
-            index=CODEC_OPTIONS.index(default_codec),
-            help="Applied to rip commands (equivalent to --codec). Use Original for no conversion flag.",
-        )
-        st.caption("Qobuz and Tidal ripping requires a premium subscription.")
-    _app_debug(f"Sidebar selections: rip_quality={rip_quality}, rip_codec={rip_codec}.")
+if "active_rip_quality" not in st.session_state or st.session_state.active_rip_quality not in QUALITY_OPTIONS:
+    st.session_state.active_rip_quality = default_rip_quality
+if "active_rip_codec" not in st.session_state or st.session_state.active_rip_codec not in CODEC_OPTIONS:
+    st.session_state.active_rip_codec = default_codec
+rip_quality = int(st.session_state.active_rip_quality)
+rip_codec = str(st.session_state.active_rip_codec)
 
 matcher_wip = bool(st.session_state.get("wip_matcher", False))
 direct_rip_wip = bool(st.session_state.get("wip_direct_rip", False))
 smoked_salmon_wip = bool(st.session_state.get("wip_smoked_salmon", True))
-with st.sidebar.expander("🚧 WIP Toggles", expanded=False):
-    _app_debug("Sidebar: rendering WIP Toggles section.")
-    st.caption("Enable WIP lock for the active tab.")
-    if main_tab == "Bandcamp Matcher":
-        matcher_wip = st.toggle("Bandcamp Matcher WIP", value=matcher_wip, key="wip_matcher")
-        _app_debug(f"WIP toggle state (matcher): {matcher_wip}")
-    elif main_tab == "Direct Qobuz Rip":
-        direct_rip_wip = st.toggle("Direct Qobuz Rip WIP", value=direct_rip_wip, key="wip_direct_rip")
-        _app_debug(f"WIP toggle state (direct rip): {direct_rip_wip}")
-    else:
-        smoked_salmon_wip = st.toggle("Smoked Salmon Upload WIP", value=smoked_salmon_wip, key="wip_smoked_salmon")
-        _app_debug(f"WIP toggle state (smoked salmon): {smoked_salmon_wip}")
+if main_tab in {"Bandcamp Matcher", "Direct Qobuz Rip", "Smoked Salmon Upload", "Smoked Salmon Settings"}:
+    with st.sidebar.expander("🚧 WIP Toggles", expanded=False):
+        _app_debug("Sidebar: rendering WIP Toggles section.")
+        st.caption("Enable WIP lock for the active tab.")
+        if main_tab == "Bandcamp Matcher":
+            matcher_wip = st.toggle("Bandcamp Matcher WIP", value=matcher_wip, key="wip_matcher", help="Lock controls in this tab while work is in progress.")
+            _app_debug(f"WIP toggle state (matcher): {matcher_wip}")
+        elif main_tab == "Direct Qobuz Rip":
+            direct_rip_wip = st.toggle("Direct Qobuz Rip WIP", value=direct_rip_wip, key="wip_direct_rip", help="Lock controls in this tab while work is in progress.")
+            _app_debug(f"WIP toggle state (direct rip): {direct_rip_wip}")
+        else:
+            smoked_salmon_wip = st.toggle("Smoked Salmon Upload WIP", value=smoked_salmon_wip, key="wip_smoked_salmon", help="Lock controls in this tab while work is in progress.")
+            _app_debug(f"WIP toggle state (smoked salmon): {smoked_salmon_wip}")
 
 has_streamrip_identifier = bool(str(streamrip_settings.get("email_or_userid", "")).strip())
 has_streamrip_token = bool(str(streamrip_settings.get("password_or_token", "")).strip())
 has_streamrip_downloads_folder = bool(str(streamrip_settings.get("downloads_folder", "")).strip())
 has_streamrip_downloads_db_path = bool(str(streamrip_settings.get("downloads_db_path", "")).strip())
 has_streamrip_failed_downloads_path = bool(str(streamrip_settings.get("failed_downloads_path", "")).strip())
+streamrip_missing_required_fields = []
+if not has_streamrip_identifier:
+    streamrip_missing_required_fields.append("email_or_userid")
+if not has_streamrip_token:
+    streamrip_missing_required_fields.append("password_or_token")
+if not has_streamrip_downloads_folder:
+    streamrip_missing_required_fields.append("downloads_folder")
+if not has_streamrip_downloads_db_path:
+    streamrip_missing_required_fields.append("downloads_db_path")
+if not has_streamrip_failed_downloads_path:
+    streamrip_missing_required_fields.append("failed_downloads_path")
 streamrip_needs_setup = (
     not streamrip_config_ready
     or not streamrip_settings
@@ -598,6 +756,10 @@ streamrip_needs_setup = (
 )
 _app_debug(f"Computed streamrip_needs_setup={streamrip_needs_setup}.")
 
+autofill_notice = str(st.session_state.pop("qobuz_autofill_notice", "")).strip()
+if autofill_notice:
+    st.success(autofill_notice)
+
 if "streamrip_setup_matcher_expand_once" not in st.session_state:
     st.session_state.streamrip_setup_matcher_expand_once = False
 if "streamrip_setup_matcher_scroll_once" not in st.session_state:
@@ -605,8 +767,217 @@ if "streamrip_setup_matcher_scroll_once" not in st.session_state:
 if "streamrip_setup_attention_message" not in st.session_state:
     st.session_state.streamrip_setup_attention_message = ""
 
-if main_tab in {"Bandcamp Matcher", "Direct Qobuz Rip"}:
-    _app_debug("Rendering shared Streamrip setup section from sidebar flow.")
+if main_tab == "Qobuz Settings":
+    st.subheader("🔐 Qobuz Settings")
+    st.caption("Manage Qobuz auth and view account/subscription details.")
+
+    configured_streamrip_app_id = str(streamrip_settings.get("app_id", "")).strip()
+    active_qobuz_app_id = configured_streamrip_app_id or str(env_qobuz_app_id or "").strip()
+    token_present = bool(str(env_qobuz_token or "").strip())
+    env_app_id_present = bool(str(os.getenv("QOBUZ_APP_ID", "")).strip())
+
+    if token_present:
+        st.success("`QOBUZ_USER_AUTH_TOKEN` is available.")
+    else:
+        st.warning("`QOBUZ_USER_AUTH_TOKEN` is missing in `.env`.")
+
+    if configured_streamrip_app_id:
+        st.info("Using Qobuz App ID saved in Streamrip settings.")
+    elif env_app_id_present:
+        st.info("Using Qobuz App ID from `.env`.")
+    elif active_qobuz_app_id:
+        st.info("Using auto-discovered Qobuz App ID.")
+    else:
+        st.warning("No Qobuz App ID available yet. Save one below or enable auto-discovery.")
+
+    with st.form("qobuz_app_id_form"):
+        qobuz_app_id_input = st.text_input(
+            "Qobuz App ID",
+            value=active_qobuz_app_id,
+            help="Saved into Streamrip settings so `.env` App ID is optional.",
+        )
+        save_qobuz_app_id = st.form_submit_button("Save App ID To Streamrip Settings")
+    if save_qobuz_app_id:
+        if not streamrip_config_ready:
+            st.error("Streamrip config is not ready yet. Open Streamrip Settings and initialize it first.")
+        else:
+            ok_save, msg_save = save_streamrip_settings(
+                streamrip_config_path,
+                use_auth_token=bool(streamrip_settings.get("use_auth_token", True)),
+                email_or_userid=str(streamrip_settings.get("email_or_userid", "")),
+                password_or_token=str(streamrip_settings.get("password_or_token", "")).strip() or str(env_qobuz_token or ""),
+                app_id=str(qobuz_app_id_input or "").strip(),
+                quality=int(streamrip_settings.get("quality", default_rip_quality)),
+                codec_selection=str(streamrip_settings.get("codec_selection", default_codec)),
+                downloads_folder=str(streamrip_settings.get("downloads_folder", "")).strip() or default_downloads_folder,
+                downloads_db_path=str(streamrip_settings.get("downloads_db_path", "")),
+                failed_downloads_path=str(streamrip_settings.get("failed_downloads_path", "")),
+            )
+            if ok_save:
+                _app_debug("Qobuz settings: saved app ID to streamrip config.")
+                st.success("Saved Qobuz App ID to Streamrip settings.")
+                st.rerun()
+            else:
+                st.error(msg_save)
+
+    q_col1, q_col2, q_col3 = st.columns([1, 1, 1])
+    with q_col1:
+        if st.button("📝 Open .env for Qobuz Token", help="Open `.env` to set/update Qobuz token values."):
+            _app_debug("Qobuz settings action: Open .env clicked.")
+            _open_env_for_qobuz()
+    with q_col2:
+        if st.button("Get Qobuz Token", help="Open the built-in token help modal with step-by-step instructions."):
+            _app_debug("Qobuz settings action: Get token help clicked.")
+            open_qobuz_help_modal()
+    with q_col3:
+        refresh_account_info = st.button(
+            "Refresh Account Info",
+            help="Fetch latest account data now from Qobuz.",
+        )
+
+    cache_key = "qobuz_account_info_cache"
+    if cache_key not in st.session_state:
+        st.session_state[cache_key] = {}
+    account_cache = dict(st.session_state.get(cache_key) or {})
+
+    can_fetch_account_info = bool(active_qobuz_app_id and env_qobuz_token)
+    if can_fetch_account_info and (
+        refresh_account_info or _should_refresh_qobuz_account_info(account_cache, active_qobuz_app_id, env_qobuz_token)
+    ):
+        with st.spinner("Fetching Qobuz account details..."):
+            ok_info, info_data, info_msg = fetch_qobuz_account_info(active_qobuz_app_id, env_qobuz_token)
+        normalized_cache = {
+            "ok": bool(ok_info),
+            "message": str(info_msg or ""),
+            "app_id": str(active_qobuz_app_id),
+            "token_fingerprint": _token_fingerprint(env_qobuz_token),
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+            "data": dict(info_data or {}),
+            "subscription_expires_at": str(info_data.get("subscription_expires_at", "")) if isinstance(info_data, dict) else "",
+        }
+        st.session_state[cache_key] = normalized_cache
+        remember_session_snapshot_value(cache_key, normalized_cache)
+        account_cache = normalized_cache
+        if ok_info and streamrip_config_ready and streamrip_settings:
+            current_streamrip_token = str(streamrip_settings.get("password_or_token", "")).strip()
+            current_streamrip_identifier = str(streamrip_settings.get("email_or_userid", "")).strip()
+            resolved_identifier = _pick_streamrip_identifier_from_account(info_data, current_streamrip_identifier)
+            should_sync_to_streamrip = (
+                current_streamrip_token != str(env_qobuz_token or "").strip()
+                or (resolved_identifier and resolved_identifier != current_streamrip_identifier)
+            )
+            if should_sync_to_streamrip:
+                sync_ok, sync_msg = save_streamrip_settings(
+                    streamrip_config_path,
+                    use_auth_token=True,
+                    email_or_userid=resolved_identifier,
+                    password_or_token=str(env_qobuz_token or "").strip(),
+                    app_id=str(active_qobuz_app_id or "").strip(),
+                    quality=int(streamrip_settings.get("quality", default_rip_quality)),
+                    codec_selection=str(streamrip_settings.get("codec_selection", default_codec)),
+                    downloads_folder=str(streamrip_settings.get("downloads_folder", "")).strip() or default_downloads_folder,
+                    downloads_db_path=str(streamrip_settings.get("downloads_db_path", "")),
+                    failed_downloads_path=str(streamrip_settings.get("failed_downloads_path", "")),
+                )
+                if sync_ok:
+                    streamrip_settings, streamrip_settings_error = load_streamrip_settings(streamrip_config_path)
+                    _cache_streamrip_runtime_state(
+                        streamrip_config_path,
+                        streamrip_config_ready,
+                        streamrip_config_init_msg,
+                        streamrip_settings,
+                        streamrip_settings_error,
+                        env_qobuz_app_id,
+                        env_qobuz_token,
+                    )
+                    st.session_state.qobuz_autofill_notice = (
+                        "Qobuz token was validated in Qobuz Settings and Streamrip was auto-updated "
+                        f"(token, App ID, identifier: `{resolved_identifier}`)."
+                    )
+                    remember_session_snapshot_value("qobuz_autofill_notice", st.session_state.qobuz_autofill_notice)
+                    st.success(st.session_state.qobuz_autofill_notice)
+                else:
+                    _app_debug(f"Qobuz settings token sync to streamrip failed: {sync_msg}")
+
+    account_ok = bool(account_cache.get("ok", False))
+    account_data = dict(account_cache.get("data", {}) or {})
+    account_msg = str(account_cache.get("message", "")).strip()
+    fetched_at = _parse_utc_datetime(str(account_cache.get("fetched_at", "")))
+    days_left = _qobuz_account_days_until_expiry(str(account_cache.get("subscription_expires_at", "")))
+
+    st.markdown("### Account Status")
+    if not can_fetch_account_info:
+        st.caption("Set both token and App ID to fetch account details.")
+    elif account_ok:
+        if days_left is not None:
+            if days_left < 0:
+                st.error(f"Subscription appears expired ({abs(days_left)} day(s) ago).")
+            elif days_left <= 7:
+                st.warning(f"Subscription expires in {days_left} day(s). This check refreshes once per day.")
+            else:
+                st.success(f"Subscription valid for {days_left} day(s).")
+        elif account_msg:
+            st.info(account_msg)
+    elif account_msg:
+        st.warning(account_msg)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.text_input("Identifier", value=str(account_data.get("identifier", "")), disabled=True)
+        st.text_input("Email", value=str(account_data.get("email", "")), disabled=True)
+        st.text_input("User ID", value=str(account_data.get("user_id", "")), disabled=True)
+        st.text_input("Login", value=str(account_data.get("login", "")), disabled=True)
+    with c2:
+        st.text_input("Country", value=str(account_data.get("country", "")), disabled=True)
+        st.text_input("Plan", value=str(account_data.get("subscription_plan", "")), disabled=True)
+        st.text_input("Status", value=str(account_data.get("subscription_status", "")), disabled=True)
+        st.text_input(
+            "Subscription Expires At (UTC)",
+            value=str(account_data.get("subscription_expires_at", "")),
+            disabled=True,
+        )
+        st.text_input(
+            "Next Renewal (UTC)",
+            value=str(account_data.get("next_renewal_at", "")),
+            disabled=True,
+        )
+
+    if fetched_at is not None:
+        st.caption(f"Last account refresh: {fetched_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+
+    st.markdown("---")
+    st.caption("Need Streamrip credentials and paths too?")
+    if st.button("Open Streamrip Settings Tab", key="qobuz_open_streamrip_tab"):
+        st.session_state.main_tab_selection_pending = "Streamrip Settings"
+        st.rerun()
+
+if main_tab == "Streamrip Settings":
+    st.subheader("⚙️ Streamrip Settings")
+    if streamrip_config_init_msg:
+        st.info(streamrip_config_init_msg)
+    if streamrip_settings_error:
+        st.warning(streamrip_settings_error)
+
+    runtime_col1, runtime_col2 = st.columns(2)
+    with runtime_col1:
+        st.session_state.active_rip_quality = st.selectbox(
+            "Rip Quality",
+            options=QUALITY_OPTIONS,
+            index=QUALITY_OPTIONS.index(st.session_state.active_rip_quality),
+            format_func=format_quality_option,
+            help="Runtime rip quality used by quick rip actions in tool tabs (equivalent to `--quality`).",
+            key="streamrip_runtime_rip_quality",
+        )
+    with runtime_col2:
+        st.session_state.active_rip_codec = st.selectbox(
+            "Rip Codec",
+            options=CODEC_OPTIONS,
+            index=CODEC_OPTIONS.index(st.session_state.active_rip_codec),
+            help="Runtime codec used by quick rip actions in tool tabs (equivalent to `--codec`). Use Original for no conversion flag.",
+            key="streamrip_runtime_rip_codec",
+        )
+    st.caption("Qobuz and Tidal ripping requires a premium subscription.")
+
     render_streamrip_setup(
         streamrip_needs_setup=streamrip_needs_setup,
         streamrip_config_path=streamrip_config_path,
@@ -616,9 +987,10 @@ if main_tab in {"Bandcamp Matcher", "Direct Qobuz Rip"}:
         default_codec=default_codec,
         env_qobuz_app_id=env_qobuz_app_id,
         env_qobuz_token=env_qobuz_token,
-        expanded_override=(streamrip_needs_setup or bool(st.session_state.streamrip_setup_matcher_expand_once)),
+        expanded_override=True,
         key_prefix="shared_streamrip_setup",
         include_browser=True,
+        missing_required_fields=streamrip_missing_required_fields,
     )
     if st.session_state.streamrip_setup_attention_message:
         _app_debug(f"Streamrip setup attention warning shown: {st.session_state.streamrip_setup_attention_message}")
@@ -645,6 +1017,20 @@ if main_tab in {"Bandcamp Matcher", "Direct Qobuz Rip"}:
 if main_tab == "Bandcamp Matcher":
     if matcher_wip:
         render_wip_notice()
+    matcher_requires_env_token = (not dry_run) and (not bool(str(env_qobuz_token).strip()))
+    if matcher_requires_env_token:
+        st.warning("Actions in this tab are disabled until `QOBUZ_USER_AUTH_TOKEN` is set in `.env` (or enable Dry Run).")
+        if st.button("Open Qobuz Settings Tab", key="matcher_open_qobuz_settings"):
+            st.session_state.main_tab_selection_pending = "Qobuz Settings"
+            st.rerun()
+    if streamrip_needs_setup:
+        st.warning("Actions in this tab are disabled until Streamrip setup is complete.")
+        if st.button("Open Streamrip Settings Tab", key="matcher_top_open_streamrip_settings"):
+            if streamrip_missing_required_fields:
+                st.session_state.streamrip_setup_focus_field = streamrip_missing_required_fields[0]
+            st.session_state.main_tab_selection_pending = "Streamrip Settings"
+            st.session_state.streamrip_setup_attention_message = "Finish the missing Streamrip settings to enable ripping."
+            st.rerun()
 
     uploaded_file = st.file_uploader(
         "Upload .txt or .log file with Bandcamp URLs",
@@ -680,7 +1066,16 @@ if main_tab == "Bandcamp Matcher":
 
     col1, col2, col3 = st.columns([1.2, 1.6, 4])
     with col1:
-        process_btn = st.button("Process", type="primary", disabled=matcher_wip or bool(validation_errors))
+        process_btn = st.button(
+            "Process",
+            type="primary",
+            disabled=matcher_wip or bool(validation_errors) or matcher_requires_env_token,
+            help=(
+                "Disabled until QOBUZ_USER_AUTH_TOKEN is set in `.env` (unless Dry Run is enabled)."
+                if matcher_requires_env_token
+                else "Run Bandcamp filtering and Qobuz matching."
+            ),
+        )
     with col2:
         auto_rip_after_export = st.toggle(
             "Auto rip after export",
@@ -716,6 +1111,7 @@ if main_tab == "Bandcamp Matcher":
         rip_codec=rip_codec,
         auto_rip_after_export=auto_rip_after_export,
         streamrip_needs_setup=streamrip_needs_setup,
+        streamrip_missing_required_fields=streamrip_missing_required_fields,
     )
 elif main_tab == "Direct Qobuz Rip":
     if direct_rip_wip:
@@ -724,9 +1120,22 @@ elif main_tab == "Direct Qobuz Rip":
         rip_quality=rip_quality,
         rip_codec=rip_codec,
         streamrip_needs_setup=streamrip_needs_setup,
+        streamrip_missing_required_fields=streamrip_missing_required_fields,
         locked=direct_rip_wip,
     )
-else:
-    render_smoked_salmon_tab(default_downloads_folder=default_downloads_folder, locked=smoked_salmon_wip)
+elif main_tab == "Smoked Salmon Upload":
+    render_smoked_salmon_tab(
+        default_downloads_folder=default_downloads_folder,
+        locked=smoked_salmon_wip,
+        show_settings=False,
+        show_upload=True,
+    )
+elif main_tab == "Smoked Salmon Settings":
+    render_smoked_salmon_tab(
+        default_downloads_folder=default_downloads_folder,
+        locked=smoked_salmon_wip,
+        show_settings=True,
+        show_upload=False,
+    )
 
 _render_alert_scroll_if_requested()

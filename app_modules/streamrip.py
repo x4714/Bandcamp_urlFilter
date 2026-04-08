@@ -99,7 +99,7 @@ def extract_qobuz_urls(raw_text: str) -> List[str]:
     return urls
 
 
-def get_env_qobuz_values(status_callback=None) -> tuple[str, str]:
+def get_env_qobuz_values(status_callback=None, fallback_app_id: str = "") -> tuple[str, str]:
     _streamrip_debug("get_env_qobuz_values() called.")
     if status_callback:
         status_callback("Loading variables from .env...")
@@ -110,7 +110,13 @@ def get_env_qobuz_values(status_callback=None) -> tuple[str, str]:
     app_id = os.getenv("QOBUZ_APP_ID", "").strip()
     token = os.getenv("QOBUZ_USER_AUTH_TOKEN", "").strip()
 
-    if not app_id:
+    fallback_app_id = str(fallback_app_id or "").strip()
+    if not app_id and fallback_app_id:
+        app_id = fallback_app_id
+        _streamrip_debug("QOBUZ_APP_ID missing in environment; using fallback app ID.")
+        if status_callback:
+            status_callback("Using saved Qobuz App ID from settings.")
+    elif not app_id:
         _streamrip_debug("QOBUZ_APP_ID missing in environment; starting auto-discovery.")
         if status_callback:
             status_callback("QOBUZ_APP_ID not set. Discovering from play.qobuz.com...")
@@ -126,6 +132,71 @@ def get_env_qobuz_values(status_callback=None) -> tuple[str, str]:
         f"Qobuz env values resolved. app_id_present={bool(app_id)}, token_present={bool(token)}"
     )
     return app_id, token
+
+
+def _format_env_assignment_value(value: str) -> str:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+    if "\n" in text:
+        text = text.replace("\n", "\\n")
+    needs_quotes = bool(re.search(r"\s|#|\"|'|=", text))
+    if not needs_quotes:
+        return text
+    escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def upsert_env_values(env_path: str = ".env", updates: dict[str, str] | None = None) -> tuple[bool, str]:
+    sanitized_updates: dict[str, str] = {}
+    for key, value in (updates or {}).items():
+        key_text = str(key or "").strip()
+        if not key_text:
+            continue
+        sanitized_updates[key_text] = str(value or "").strip()
+
+    if not sanitized_updates:
+        return True, "No .env updates requested."
+
+    try:
+        existing_lines: list[str] = []
+        if os.path.exists(env_path):
+            with open(env_path, "r", encoding="utf-8") as env_file:
+                existing_lines = env_file.read().splitlines()
+        else:
+            os.makedirs(os.path.dirname(os.path.abspath(env_path)) or ".", exist_ok=True)
+            existing_lines = []
+
+        applied_keys: set[str] = set()
+        updated_lines: list[str] = []
+        for line in existing_lines:
+            updated_line = line
+            for key, value in sanitized_updates.items():
+                key_pattern = rf"^\s*(?:export\s+)?{re.escape(key)}\s*="
+                if re.match(key_pattern, line):
+                    updated_line = f"{key}={_format_env_assignment_value(value)}"
+                    applied_keys.add(key)
+                    break
+            updated_lines.append(updated_line)
+
+        for key, value in sanitized_updates.items():
+            if key in applied_keys:
+                continue
+            updated_lines.append(f"{key}={_format_env_assignment_value(value)}")
+
+        final_text = "\n".join(updated_lines)
+        if final_text and not final_text.endswith("\n"):
+            final_text += "\n"
+
+        with open(env_path, "w", encoding="utf-8") as env_file:
+            env_file.write(final_text)
+
+        _streamrip_debug(
+            "Updated .env values for keys: "
+            + ", ".join(sorted(sanitized_updates.keys()))
+        )
+        return True, f"Updated .env values: {', '.join(sorted(sanitized_updates.keys()))}."
+    except Exception as e:
+        _streamrip_debug(f"Failed updating .env values: {e}")
+        return False, f"Could not update .env values: {e}"
 
 
 def discover_qobuz_app_id(status_callback=None) -> str:
@@ -561,12 +632,69 @@ def read_streamrip_config_text(config_path: str, show_secrets: bool = False) -> 
     return text
 
 
-def fetch_qobuz_user_identifier(app_id: str, user_token: str) -> tuple[bool, dict, str]:
-    _streamrip_debug("fetch_qobuz_user_identifier() called.")
-    app_id = app_id.strip()
-    user_token = user_token.strip()
+def _extract_first_present_value(payload: Any, keys: tuple[str, ...]) -> Any:
+    if payload is None:
+        return None
+    search_keys = {k.lower() for k in keys}
+    queue = [payload]
+    while queue:
+        current = queue.pop(0)
+        if isinstance(current, dict):
+            for key, value in current.items():
+                key_text = str(key).strip().lower()
+                if key_text in search_keys and value not in (None, "", [], {}):
+                    return value
+                if isinstance(value, (dict, list, tuple)):
+                    queue.append(value)
+        elif isinstance(current, (list, tuple)):
+            for value in current:
+                if isinstance(value, (dict, list, tuple)):
+                    queue.append(value)
+    return None
+
+
+def _parse_qobuz_datetime(value: Any) -> Optional[datetime]:
+    if value in (None, "", 0):
+        return None
+    if isinstance(value, (int, float)):
+        timestamp = float(value)
+        if timestamp > 10_000_000_000:
+            timestamp /= 1000.0
+        try:
+            return datetime.fromtimestamp(timestamp, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
+    if not isinstance(value, str):
+        return None
+
+    raw = value.strip()
+    if not raw:
+        return None
+    candidates = [raw]
+    if raw.endswith("Z"):
+        candidates.append(f"{raw[:-1]}+00:00")
+    for candidate in candidates:
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            continue
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            parsed = datetime.strptime(raw, fmt).replace(tzinfo=timezone.utc)
+            return parsed
+        except ValueError:
+            continue
+    return None
+
+
+def _qobuz_login_payload(app_id: str, user_token: str) -> tuple[bool, dict, str]:
+    app_id = str(app_id).strip()
+    user_token = str(user_token).strip()
     if not app_id or not user_token:
-        _streamrip_debug("Cannot fetch identifier; app ID or token missing.")
+        _streamrip_debug("Cannot query Qobuz login API; app ID or token missing.")
         return False, {}, "Need both Qobuz App ID and user auth token."
 
     url = "https://www.qobuz.com/api.json/0.2/user/login"
@@ -587,46 +715,115 @@ def fetch_qobuz_user_identifier(app_id: str, user_token: str) -> tuple[bool, dic
             body = response.read().decode("utf-8", errors="replace")
     except urlerror.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
-        _streamrip_debug(f"Qobuz identifier lookup HTTP error: {e.code}")
+        _streamrip_debug(f"Qobuz account lookup HTTP error: {e.code}")
         return False, {}, f"Qobuz lookup failed with HTTP {e.code}: {body[:180]}"
     except Exception as e:
-        _streamrip_debug(f"Qobuz identifier lookup request failed: {e}")
+        _streamrip_debug(f"Qobuz account lookup request failed: {e}")
         return False, {}, f"Qobuz lookup failed: {e}"
 
     if status != 200:
-        _streamrip_debug(f"Qobuz identifier lookup returned non-200 status: {status}")
+        _streamrip_debug(f"Qobuz account lookup returned non-200 status: {status}")
         return False, {}, f"Qobuz lookup failed with HTTP {status}: {body[:180]}"
 
     try:
         data = json.loads(body)
     except json.JSONDecodeError:
-        _streamrip_debug("Qobuz identifier lookup returned non-JSON body.")
+        _streamrip_debug("Qobuz account lookup returned non-JSON body.")
         return False, {}, "Qobuz response was not valid JSON."
+    return True, data if isinstance(data, dict) else {}, "Fetched Qobuz account info."
 
-    user = data.get("user", {}) if isinstance(data, dict) else {}
+
+def fetch_qobuz_account_info(app_id: str, user_token: str) -> tuple[bool, dict, str]:
+    _streamrip_debug("fetch_qobuz_account_info() called.")
+    ok, data, msg = _qobuz_login_payload(app_id, user_token)
+    if not ok:
+        return False, data, msg
+
+    user = data.get("user", {}) if isinstance(data.get("user"), dict) else {}
     user_id = user.get("id") or user.get("user_id") or data.get("user_id", "")
     email = user.get("email") or data.get("email", "")
     login = user.get("login") or user.get("slug") or ""
 
     identifier = ""
     for candidate in (user_id, login, email):
-        candidate_str = str(candidate).strip()
-        if candidate_str:
-            identifier = candidate_str
+        candidate_text = str(candidate).strip()
+        if candidate_text:
+            identifier = candidate_text
             break
 
+    plan_name_value = _extract_first_present_value(
+        data,
+        ("offer_long_label", "offer_short_label", "long_label", "short_label", "plan", "name"),
+    )
+    status_value = _extract_first_present_value(
+        data,
+        ("status", "state", "subscription_status", "account_status"),
+    )
+    expiry_value = _extract_first_present_value(
+        data,
+        (
+            "subscription_end_date",
+            "subscription_expiration_date",
+            "expiration_date",
+            "expire_at",
+            "expires_at",
+            "period_end",
+            "end_date",
+            "valid_to",
+        ),
+    )
+    renewal_value = _extract_first_present_value(
+        data,
+        ("renewal_date", "next_billing_date", "next_payment_date", "renew_date"),
+    )
+    country_value = _extract_first_present_value(data, ("country_code", "country", "zone"))
+
+    expiry_dt = _parse_qobuz_datetime(expiry_value)
+    renewal_dt = _parse_qobuz_datetime(renewal_value)
+    days_until_expiry: Optional[int] = None
+    if expiry_dt is not None:
+        seconds_left = (expiry_dt - datetime.now(timezone.utc)).total_seconds()
+        days_until_expiry = int(seconds_left // 86400)
+
+    account_info = {
+        "identifier": str(identifier).strip(),
+        "email": str(email).strip(),
+        "user_id": str(user_id).strip(),
+        "login": str(login).strip(),
+        "country": str(country_value or "").strip(),
+        "subscription_plan": str(plan_name_value or "").strip(),
+        "subscription_status": str(status_value or "").strip(),
+        "subscription_expires_at": expiry_dt.isoformat() if expiry_dt else "",
+        "next_renewal_at": renewal_dt.isoformat() if renewal_dt else "",
+        "days_until_expiry": days_until_expiry,
+    }
+    _streamrip_debug(
+        "Fetched Qobuz account info successfully "
+        f"(identifier_present={bool(account_info['identifier'])}, "
+        f"expiry_present={bool(account_info['subscription_expires_at'])})."
+    )
+    return True, account_info, msg
+
+
+def fetch_qobuz_user_identifier(app_id: str, user_token: str) -> tuple[bool, dict, str]:
+    _streamrip_debug("fetch_qobuz_user_identifier() called.")
+    ok, account_info, lookup_msg = fetch_qobuz_account_info(app_id, user_token)
+    if not ok:
+        return False, {}, lookup_msg
+    identifier = str(account_info.get("identifier", "")).strip()
     if not identifier:
         _streamrip_debug("Qobuz identifier lookup succeeded but no identifier found in payload.")
         return False, {}, "Could not find user identifier in Qobuz response."
 
     _streamrip_debug(
-        f"Fetched Qobuz identifier successfully (identifier=`{identifier}`, email_present={bool(email)})."
+        f"Fetched Qobuz identifier successfully (identifier=`{identifier}`, "
+        f"email_present={bool(account_info.get('email'))})."
     )
     return True, {
         "identifier": identifier,
-        "email": str(email).strip(),
-        "user_id": str(user_id).strip(),
-        "login": str(login).strip(),
+        "email": str(account_info.get("email", "")).strip(),
+        "user_id": str(account_info.get("user_id", "")).strip(),
+        "login": str(account_info.get("login", "")).strip(),
     }, "Fetched Qobuz user identifier."
 
 

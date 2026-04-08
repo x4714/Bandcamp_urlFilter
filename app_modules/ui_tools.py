@@ -33,6 +33,7 @@ def render_direct_qobuz_rip_tab(
     rip_quality: int,
     rip_codec: str,
     streamrip_needs_setup: bool = False,
+    streamrip_missing_required_fields: list[str] | None = None,
     locked: bool = False,
 ) -> None:
     _ui_tools_debug(
@@ -41,6 +42,26 @@ def render_direct_qobuz_rip_tab(
     )
     st.subheader("🔗 Direct Qobuz Rip")
     st.caption("Paste Qobuz links or upload a `.txt/.log` file, then rip directly with streamrip.")
+    missing_required_fields = list(streamrip_missing_required_fields or [])
+    missing_labels = {
+        "email_or_userid": "Qobuz Email or User ID",
+        "password_or_token": "Qobuz Password Hash or Auth Token",
+        "downloads_folder": "Downloads Folder Path",
+        "downloads_db_path": "Downloads DB Path",
+        "failed_downloads_path": "Failed Downloads Folder Path",
+    }
+    if streamrip_needs_setup:
+        labels = [missing_labels.get(f, f.replace("_", " ").title()) for f in missing_required_fields]
+        if labels:
+            st.warning("Actions in this tab are disabled. Missing settings: " + ", ".join(labels))
+        else:
+            st.warning("Actions in this tab are disabled until Streamrip setup is complete.")
+        if st.button("Open Streamrip Settings Tab", key="direct_open_streamrip_settings"):
+            if missing_required_fields:
+                st.session_state.streamrip_setup_focus_field = missing_required_fields[0]
+            st.session_state.main_tab_selection_pending = "Streamrip Settings"
+            st.session_state.streamrip_setup_attention_message = "Finish the missing Streamrip settings to enable direct ripping."
+            st.rerun()
 
     if "direct_rip_last_level" not in st.session_state:
         st.session_state.direct_rip_last_level = ""
@@ -123,6 +144,11 @@ def render_direct_qobuz_rip_tab(
         "Rip Parsed Qobuz Links",
         type="primary",
         key="direct_qobuz_rip_btn",
+        help=(
+            "Disabled until required Streamrip settings are completed."
+            if streamrip_needs_setup
+            else "Run Streamrip for all parsed Qobuz links."
+        ),
         disabled=locked or streamrip_needs_setup,
     )
     if rip_direct_btn:
