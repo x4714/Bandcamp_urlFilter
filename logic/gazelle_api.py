@@ -4,41 +4,52 @@ import time
 from typing import Optional, Dict, Any
 
 class GazelleAPI:
-    def __init__(self, site_name: str, site_url: str, api_key: str = "", session_cookie: str = "", rate_limit_seconds: float = 2.0):
+    def __init__(self, site_name: str, site_url: str, api_key: str = "", rate_limit_seconds: float = 2.0):
         self.site_name = site_name
         self.site_url = site_url.rstrip("/")
-        self.api_key = api_key
-        self.session_cookie = session_cookie.strip().strip("'").strip('"')
+        self.api_key = api_key.strip().strip("'").strip('"')
         self.rate_limit_seconds = rate_limit_seconds
         self._last_request_time = 0.0
         self._session: Optional[aiohttp.ClientSession] = None
         self.failed = False
         self.last_error = ""
+        self.authenticated = False
 
     async def _ensure_session(self):
         if self._session is None or self._session.closed:
-            cookies = {}
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
                 "Accept": "application/json",
-                "Referer": f"{self.site_url}/"
+                "Referer": f"{self.site_url}/",
+                "Connection": "keep-alive"
             }
 
             if self.api_key:
-                # API Key is the preferred method for automated tools
                 headers["Authorization"] = self.api_key
-            elif self.session_cookie:
-                # Fallback to session cookie if no API Key is provided
-                val = self.session_cookie
-                if val.startswith("session="):
-                    val = val.split("session=")[1].split(";")[0]
-                cookies["session"] = val
             
-            self._session = aiohttp.ClientSession(cookies=cookies, headers=headers)
+            self._session = aiohttp.ClientSession(headers=headers)
 
     async def close(self):
         if self._session and not self._session.closed:
             await self._session.close()
+
+    async def authenticate(self) -> bool:
+        """
+        Performs an 'index' call to establish the connection and verify API Key.
+        Matches smoked-salmon's behavior.
+        """
+        if self.failed:
+            return False
+        if self.authenticated:
+            return True
+            
+        response, error = await self._request({"action": "index"})
+        if error:
+            # We don't set failed=True on 429, but on most others we do
+            return False
+            
+        self.authenticated = True
+        return True
 
     async def _request(self, params: Dict[str, Any]) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
         if self.failed:
@@ -50,8 +61,8 @@ class GazelleAPI:
         if elapsed < self.rate_limit_seconds:
             await asyncio.sleep(self.rate_limit_seconds - elapsed)
         
-        if not self.api_key and not self.session_cookie:
-            return None, "No API Key or Session Cookie configured."
+        if not self.api_key:
+            return None, "No API Key configured."
 
         await self._ensure_session()
         self._last_request_time = time.monotonic()
@@ -82,12 +93,12 @@ class GazelleAPI:
                     self.last_error = f"Redirect to {loc}"
                     
                     if "login.php" in loc:
-                        return None, "Login required (Session expired?)"
+                        return None, "Login required (API Key invalid or Permission denied?)"
                     return None, f"Anti-bot/Redirect to {loc}"
                 elif response.status == 403:
                     self.failed = True
                     self.last_error = "403 Forbidden"
-                    return None, "Forbidden (403). Tracker might be blocking this IP or Session."
+                    return None, "Forbidden (403). Tracker might be blocking this IP or API Key."
                 elif response.status == 429:
                     return None, "Rate limited (429)."
                 return None, f"HTTP {response.status}"
@@ -102,8 +113,14 @@ class GazelleAPI:
         if self.failed:
             return False, f"⚠️ {self.site_name} Disabled: {self.last_error}"
 
-        if not self.api_key and not self.session_cookie:
+        if not self.api_key:
             return False, ""
+
+        # Ensure authentication/index call first
+        if not self.authenticated:
+            success = await self.authenticate()
+            if not success:
+                return False, f"⚠️ {self.site_name} Auth Failed"
             
         # 1. Try search by UPC (if provided)
         if upc:

@@ -108,14 +108,14 @@ async def process_batch(entries, progress_callback=None, check_dupes: bool = Fal
         trackers_created_locally = True
         # Load credentials from env
         red_key = os.getenv("RED_API_KEY", "")
-        red_cookie = os.getenv("RED_SESSION_COOKIE", "")
         ops_key = os.getenv("OPS_API_KEY", "")
-        ops_cookie = os.getenv("OPS_SESSION_COOKIE", "")
+        red_url = os.getenv("RED_URL", "https://redacted.sh").rstrip("/")
+        ops_url = os.getenv("OPS_URL", "https://orpheus.network").rstrip("/")
         
-        if red_key or red_cookie:
-            trackers.append(GazelleAPI("RED", "https://redacted.ch", api_key=red_key, session_cookie=red_cookie))
-        if ops_key or ops_cookie:
-            trackers.append(GazelleAPI("OPS", "https://orpheus.network", api_key=ops_key, session_cookie=ops_cookie))
+        if red_key:
+            trackers.append(GazelleAPI("RED", red_url, api_key=red_key))
+        if ops_key:
+            trackers.append(GazelleAPI("OPS", ops_url, api_key=ops_key))
 
     _matching_debug(
         f"Matching runtime config: concurrency={concurrency}, min_interval_seconds={min_interval_seconds}, trackers={len(trackers)}."

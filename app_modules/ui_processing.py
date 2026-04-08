@@ -93,17 +93,21 @@ def handle_process_submission(
     st.session_state.total_entries = len(filtered_entries)
     st.session_state.current_index = 0
     st.session_state.processing = True
-    st.session_state.check_dupes = filter_config.get("check_dupes", False)
+    st.session_state.check_red = filter_config.get("check_red", False)
+    st.session_state.check_ops = filter_config.get("check_ops", False)
     
     # Initialize trackers if needed
     st.session_state.batch_trackers = []
-    if st.session_state.check_dupes:
-        red_key, red_cookie = os.getenv("RED_API_KEY", ""), os.getenv("RED_SESSION_COOKIE", "")
-        ops_key, ops_cookie = os.getenv("OPS_API_KEY", ""), os.getenv("OPS_SESSION_COOKIE", "")
-        if red_key or red_cookie:
-            st.session_state.batch_trackers.append(GazelleAPI("RED", "https://redacted.ch", api_key=red_key, session_cookie=red_cookie))
-        if ops_key or ops_cookie:
-            st.session_state.batch_trackers.append(GazelleAPI("OPS", "https://orpheus.network", api_key=ops_key, session_cookie=ops_cookie))
+    if st.session_state.check_red or st.session_state.check_ops:
+        red_key = os.getenv("RED_API_KEY", "")
+        ops_key = os.getenv("OPS_API_KEY", "")
+        red_url = os.getenv("RED_URL", "https://redacted.sh").rstrip("/")
+        ops_url = os.getenv("OPS_URL", "https://orpheus.network").rstrip("/")
+        
+        if st.session_state.check_red and red_key:
+            st.session_state.batch_trackers.append(GazelleAPI("RED", red_url, api_key=red_key))
+        if st.session_state.check_ops and ops_key:
+            st.session_state.batch_trackers.append(GazelleAPI("OPS", ops_url, api_key=ops_key))
 
     _ui_processing_debug(f"Queued {len(filtered_entries)} entries for async matching run. Trackers: {len(st.session_state.batch_trackers)}")
     st.rerun()
@@ -163,12 +167,13 @@ def run_processing_tick() -> None:
                     f"Current: {status_text} | {album[:120]}"
                 )
 
-            check_dupes_flag = st.session_state.get("check_dupes", False)
+            check_red_flag = st.session_state.get("check_red", False)
+            check_ops_flag = st.session_state.get("check_ops", False)
             batch_trackers = st.session_state.get("batch_trackers", [])
             batch_rows = asyncio.run(process_batch(
                 batch, 
                 progress_callback=_on_batch_progress, 
-                check_dupes=check_dupes_flag,
+                check_dupes=(check_red_flag or check_ops_flag),
                 existing_trackers=batch_trackers
             ))
             st.session_state.results.extend(batch_rows)
@@ -277,18 +282,20 @@ def render_results_and_exports(
     )
 
     # Check for manual dupe re-check
-    tracker_config_exists = any([os.getenv("RED_API_KEY"), os.getenv("RED_SESSION_COOKIE"), os.getenv("OPS_API_KEY"), os.getenv("OPS_SESSION_COOKIE")])
-    if tracker_config_exists:
+    red_key = os.getenv("RED_API_KEY", "")
+    ops_key = os.getenv("OPS_API_KEY", "")
+    
+    if red_key or ops_key:
         if st.button("Check Results for Dupes (RED/OPS)"):
             with st.status("Checking existing results for duplicates...") as status:
                 # Initialize trackers
                 trackers = []
-                red_key, red_cookie = os.getenv("RED_API_KEY", ""), os.getenv("RED_SESSION_COOKIE", "")
-                ops_key, ops_cookie = os.getenv("OPS_API_KEY", ""), os.getenv("OPS_SESSION_COOKIE", "")
-                if red_key or red_cookie:
-                    trackers.append(GazelleAPI("RED", "https://redacted.ch", api_key=red_key, session_cookie=red_cookie))
-                if ops_key or ops_cookie:
-                    trackers.append(GazelleAPI("OPS", "https://orpheus.network", api_key=ops_key, session_cookie=ops_cookie))
+                red_url = os.getenv("RED_URL", "https://redacted.sh").rstrip("/")
+                ops_url = os.getenv("OPS_URL", "https://orpheus.network").rstrip("/")
+                if red_key:
+                    trackers.append(GazelleAPI("RED", red_url, api_key=red_key))
+                if ops_key:
+                    trackers.append(GazelleAPI("OPS", ops_url, api_key=ops_key))
                 
                 if not trackers:
                     st.warning("No tracker credentials found in .env.")

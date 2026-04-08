@@ -204,7 +204,14 @@ if main_tab == "Bandcamp Matcher":
     with st.sidebar.expander("⚙️ Matcher Run Settings", expanded=True):
         free_mode = st.selectbox("Pricing", options=["All", "Free", "Paid"], index=0)
         dry_run = st.checkbox("Dry Run", value=False, help="Only apply Bandcamp filter, skip Qobuz search.")
-        check_dupes = st.checkbox("Check Dupes (RED/OPS)", value=False, help="Check Qobuz matches against RED and OPS for duplicates.")
+        red_key = os.getenv("RED_API_KEY", "")
+        ops_key = os.getenv("OPS_API_KEY", "")
+        check_red = False
+        check_ops = False
+        if red_key:
+            check_red = st.checkbox("Check RED", value=False, help="Check Qobuz matches against Redacted (RED) for duplicates.")
+        if ops_key:
+            check_ops = st.checkbox("Check OPS", value=False, help="Check Qobuz matches against Orpheus (OPS) for duplicates.")
 
 if main_tab in {"Bandcamp Matcher", "Direct Qobuz Rip"}:
     _app_debug("Sidebar: rendering Qobuz Token section.")
@@ -654,7 +661,8 @@ if main_tab == "Bandcamp Matcher":
         "min_duration": int(min_duration) if min_duration else None,
         "max_duration": int(max_duration) if max_duration else None,
         "free_mode": free_mode,
-        "check_dupes": check_dupes,
+        "check_red": check_red if "check_red" in locals() else False,
+        "check_ops": check_ops if "check_ops" in locals() else False,
     }
 
     col1, col2, col3 = st.columns([1.2, 1.6, 4])
