@@ -10,8 +10,9 @@ from dotenv import load_dotenv
 
 from app_modules.debug_logging import emit_debug
 from app_modules.filtering import build_filtered_entries, get_download_link
-from app_modules.matching import process_batch
+from app_modules.matching import process_batch, process_single_entry
 from app_modules.streamrip import export_qobuz_batches, run_streamrip_batches
+from logic.gazelle_api import GazelleAPI
 
 
 def _ui_processing_debug(message: str) -> None:
@@ -92,7 +93,19 @@ def handle_process_submission(
     st.session_state.total_entries = len(filtered_entries)
     st.session_state.current_index = 0
     st.session_state.processing = True
-    _ui_processing_debug(f"Queued {len(filtered_entries)} entries for async matching run.")
+    st.session_state.check_dupes = filter_config.get("check_dupes", False)
+    
+    # Initialize trackers if needed
+    st.session_state.batch_trackers = []
+    if st.session_state.check_dupes:
+        red_key, red_cookie = os.getenv("RED_API_KEY", ""), os.getenv("RED_SESSION_COOKIE", "")
+        ops_key, ops_cookie = os.getenv("OPS_API_KEY", ""), os.getenv("OPS_SESSION_COOKIE", "")
+        if red_key or red_cookie:
+            st.session_state.batch_trackers.append(GazelleAPI("RED", "https://redacted.ch", api_key=red_key, session_cookie=red_cookie))
+        if ops_key or ops_cookie:
+            st.session_state.batch_trackers.append(GazelleAPI("OPS", "https://orpheus.network", api_key=ops_key, session_cookie=ops_cookie))
+
+    _ui_processing_debug(f"Queued {len(filtered_entries)} entries for async matching run. Trackers: {len(st.session_state.batch_trackers)}")
     st.rerun()
 
 
@@ -119,6 +132,12 @@ def run_processing_tick() -> None:
         _ui_processing_debug("Cancellation requested; ending processing loop.")
         st.session_state.processing = False
         st.session_state.process_complete = False
+        
+        # Close trackers
+        for tracker in st.session_state.get("batch_trackers", []):
+            asyncio.run(tracker.close())
+        st.session_state.batch_trackers = []
+
         matched_count = len([r for r in st.session_state.results if r["Qobuz Link"]])
         st.session_state.status_log = (
             f"Cancelled. We found {matched_count} out of {total} matches before stopping."
@@ -144,7 +163,14 @@ def run_processing_tick() -> None:
                     f"Current: {status_text} | {album[:120]}"
                 )
 
-            batch_rows = asyncio.run(process_batch(batch, progress_callback=_on_batch_progress))
+            check_dupes_flag = st.session_state.get("check_dupes", False)
+            batch_trackers = st.session_state.get("batch_trackers", [])
+            batch_rows = asyncio.run(process_batch(
+                batch, 
+                progress_callback=_on_batch_progress, 
+                check_dupes=check_dupes_flag,
+                existing_trackers=batch_trackers
+            ))
             st.session_state.results.extend(batch_rows)
             st.session_state.current_index = end_idx
             _ui_processing_debug(
@@ -160,6 +186,12 @@ def run_processing_tick() -> None:
             _ui_processing_debug("All pending entries processed; marking run complete.")
             st.session_state.processing = False
             st.session_state.process_complete = True
+            
+            # Close trackers
+            for tracker in st.session_state.get("batch_trackers", []):
+                asyncio.run(tracker.close())
+            st.session_state.batch_trackers = []
+
             matched_count = len([r for r in st.session_state.results if r["Qobuz Link"]])
             st.session_state.status_log = f"Complete! We found {matched_count} out of {total} matches."
             status_box.success(st.session_state.status_log)
@@ -244,7 +276,56 @@ def render_results_and_exports(
         width="stretch",
     )
 
-    matched_qobuz_urls = [r["Qobuz Link"] for r in st.session_state.results if r.get("Qobuz Link")]
+    # Check for manual dupe re-check
+    tracker_config_exists = any([os.getenv("RED_API_KEY"), os.getenv("RED_SESSION_COOKIE"), os.getenv("OPS_API_KEY"), os.getenv("OPS_SESSION_COOKIE")])
+    if tracker_config_exists:
+        if st.button("Check Results for Dupes (RED/OPS)"):
+            with st.status("Checking existing results for duplicates...") as status:
+                # Initialize trackers
+                trackers = []
+                red_key, red_cookie = os.getenv("RED_API_KEY", ""), os.getenv("RED_SESSION_COOKIE", "")
+                ops_key, ops_cookie = os.getenv("OPS_API_KEY", ""), os.getenv("OPS_SESSION_COOKIE", "")
+                if red_key or red_cookie:
+                    trackers.append(GazelleAPI("RED", "https://redacted.ch", api_key=red_key, session_cookie=red_cookie))
+                if ops_key or ops_cookie:
+                    trackers.append(GazelleAPI("OPS", "https://orpheus.network", api_key=ops_key, session_cookie=ops_cookie))
+                
+                if not trackers:
+                    st.warning("No tracker credentials found in .env.")
+                else:
+                    async def run_manual_check():
+                        new_results = []
+                        try:
+                            for idx, res in enumerate(st.session_state.results):
+                                if res.get("Qobuz Link") and "Dupe" not in str(res.get("Status", "")):
+                                    artist = res.get("Artist")
+                                    album = res.get("Album")
+                                    upc = res.get("UPC") 
+                                    
+                                    status.update(label=f"Checking {idx+1}/{len(st.session_state.results)}: {artist} - {album}...")
+                                    
+                                    tracker_results = []
+                                    for tracker in trackers:
+                                        is_dupe, info = await tracker.search_duplicates(artist, album, upc=upc)
+                                        if is_dupe:
+                                            tracker_results.append(f"Dupe ({tracker.site_name})")
+                                        elif info:
+                                            tracker_results.append(info)
+                                    
+                                    if tracker_results:
+                                        res["Status"] = str(res.get("Status", "✅ Matched")) + " | " + " | ".join(tracker_results)
+                                new_results.append(res)
+                            st.session_state.results = new_results
+                        finally:
+                            for tracker in trackers:
+                                await tracker.close()
+
+                    asyncio.run(run_manual_check())
+                    status.update(label="Dupe check complete.", state="complete")
+                    st.rerun()
+
+    valid_export_results = [r for r in st.session_state.results if r.get("Qobuz Link") and "Dupe (" not in str(r.get("Status", ""))]
+    matched_qobuz_urls = [r["Qobuz Link"] for r in valid_export_results]
     qobuz_strings = get_download_link([{"qobuz_url": url} for url in matched_qobuz_urls])
     if matched_qobuz_urls:
         st.download_button(
@@ -275,7 +356,7 @@ def render_results_and_exports(
             f"Export/rip action clicked. export_btn={export_btn}, rip_this_run_btn={rip_this_run_btn}."
         )
         try:
-            valid_urls = [r["Qobuz Link"] for r in st.session_state.results if r["Qobuz Link"]]
+            valid_urls = [r["Qobuz Link"] for r in st.session_state.results if r.get("Qobuz Link") and "Dupe (" not in str(r.get("Status", ""))]
             if not valid_urls:
                 _ui_processing_debug("Export/rip action had no matched Qobuz URLs.")
                 st.warning("No matched Qobuz links found in this run.")

@@ -196,6 +196,7 @@ async def match_album(session: aiohttp.ClientSession, bandcamp_data: dict) -> di
                 "qobuz_artist": qb_album.get("artist", {}).get("name"),
                 "qobuz_album": qb_album.get("title"),
                 "qobuz_id": qb_album.get("id"),
+                "upc": qb_album.get("upc") or qb_album.get("barcode"),
                 "bandcamp_url": bandcamp_data.get("url")
             }
             

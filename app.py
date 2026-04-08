@@ -204,6 +204,7 @@ if main_tab == "Bandcamp Matcher":
     with st.sidebar.expander("⚙️ Matcher Run Settings", expanded=True):
         free_mode = st.selectbox("Pricing", options=["All", "Free", "Paid"], index=0)
         dry_run = st.checkbox("Dry Run", value=False, help="Only apply Bandcamp filter, skip Qobuz search.")
+        check_dupes = st.checkbox("Check Dupes (RED/OPS)", value=False, help="Check Qobuz matches against RED and OPS for duplicates.")
 
 if main_tab in {"Bandcamp Matcher", "Direct Qobuz Rip"}:
     _app_debug("Sidebar: rendering Qobuz Token section.")
@@ -220,7 +221,12 @@ PYTHONPATH=.
 # Optional: Set your own Qobuz App ID (if omitted, the app auto-fetches it from Qobuz Web Player)
 # QOBUZ_APP_ID=
 # Required (depending on region/account type): Set your user Auth Token for Qobuz
-QOBUZ_USER_AUTH_TOKEN="""
+QOBUZ_USER_AUTH_TOKEN=
+# Tracker API Keys or Session Cookies for duplicate checking
+RED_API_KEY=
+RED_SESSION_COOKIE=
+OPS_API_KEY=
+OPS_SESSION_COOKIE="""
                 try:
                     with open(env_path, "w", encoding="utf-8") as f:
                         f.write(template)
@@ -648,6 +654,7 @@ if main_tab == "Bandcamp Matcher":
         "min_duration": int(min_duration) if min_duration else None,
         "max_duration": int(max_duration) if max_duration else None,
         "free_mode": free_mode,
+        "check_dupes": check_dupes,
     }
 
     col1, col2, col3 = st.columns([1.2, 1.6, 4])
