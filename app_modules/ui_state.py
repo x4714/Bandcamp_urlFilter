@@ -46,6 +46,9 @@ SESSION_SNAPSHOT_ONLY_KEYS = [
     "streamrip_browser_entries_cache_data",
     "streamrip_browser_entries_cache_ts",
     "streamrip_browser_entries_refresh_requested",
+    "qobuz_account_info_cache",
+    "qobuz_env_token_sync_marker",
+    "qobuz_autofill_notice",
 ]
 
 
