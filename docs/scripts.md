@@ -12,7 +12,7 @@ Python 3.14 note:
 
 ## Hosting Helper
 
-- `setup-hbd.sh`: Provisioning helper for HostingByDesign-style boxes. Finds or bootstraps a Python 3.10+ runtime, creates a userland virtualenv, installs dependencies, writes a user `systemd` unit, stores the chosen port, and optionally starts the service.
+- `setup-hbd.sh`: Provisioning helper for HostingByDesign-style boxes. Finds or bootstraps a Python 3.10+ runtime, creates a userland virtualenv, installs dependencies, can offer optional built-in app auth for public-facing domains, writes a user `systemd` unit, stores the chosen port, and optionally starts the service.
 
 ## Export Helpers
 

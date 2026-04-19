@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import streamlit as st
 from dotenv import load_dotenv
+from app_modules.app_auth import render_auth_gate
 from app_modules.debug_logging import emit_debug
 
 from app_modules.filtering import validate_filters
@@ -45,6 +46,7 @@ from app_modules.ui_tools import render_direct_qobuz_rip_tab
 load_dotenv()
 
 st.set_page_config(page_title="Bandcamp to Qobuz Matcher", layout="wide")
+render_auth_gate()
 st.title("🎵 Bandcamp to Qobuz Matcher")
 st.markdown("Filter your Bandcamp URLs and find exact high-resolution matches on Qobuz.")
 render_modal_base_styles()
@@ -212,6 +214,10 @@ PYTHONPATH=.
 # QOBUZ_APP_ID=
 # Required (depending on region/account type): Set your user Auth Token for Qobuz
 QOBUZ_USER_AUTH_TOKEN=
+# Optional app login for public-facing deployments
+APP_AUTH_ENABLED=0
+APP_AUTH_USERNAME=
+APP_AUTH_PASSWORD_HASH=
 # Tracker API Keys or Session Cookies for duplicate checking
 RED_API_KEY=
 RED_SESSION_COOKIE=

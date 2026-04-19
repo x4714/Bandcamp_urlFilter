@@ -16,6 +16,9 @@ services:
     environment:
       QOBUZ_USER_AUTH_TOKEN: ${QOBUZ_USER_AUTH_TOKEN}
       QOBUZ_APP_ID: ${QOBUZ_APP_ID:-}
+      APP_AUTH_ENABLED: ${APP_AUTH_ENABLED:-0}
+      APP_AUTH_USERNAME: ${APP_AUTH_USERNAME:-}
+      APP_AUTH_PASSWORD_HASH: ${APP_AUTH_PASSWORD_HASH:-}
     volumes:
       - ./exports:/app/exports
       - ./docker-data/config:/config
@@ -124,6 +127,8 @@ Add `QOBUZ_USER_AUTH_TOKEN` to `.env` for live Qobuz matching.
 Optional extras you can also keep in `.env`:
 
 - `QOBUZ_APP_ID` if you want to pin it instead of relying on auto-discovery
+- `APP_AUTH_ENABLED`, `APP_AUTH_USERNAME`, and `APP_AUTH_PASSWORD_HASH` if the app will be reachable on the public web
+- `APP_AUTH_SESSION_TTL_SECONDS`, `APP_AUTH_MAX_FAILURES`, and `APP_AUTH_LOCKOUT_SECONDS` if you want to tune session expiry or lockout behavior
 - `RED_API_KEY` / `RED_SESSION_COOKIE` and `OPS_API_KEY` / `OPS_SESSION_COOKIE` for duplicate checking and upload helpers
 - `RED_URL` and `OPS_URL` if you use non-default tracker domains
 
@@ -159,5 +164,6 @@ docker compose -f docker-compose.ghcr.yml down
 - Exported URL batches are written to `/app/exports` and the generated `run_rip.sh` / `run_rip.bat` helper scripts are written to `/app`.
 - Docker is currently the easiest way to keep the full rip/download workflow available if your host machine is using Python 3.14+.
 - If you want to keep the app private, do not publish port `8501` beyond your reverse proxy or SSH tunnel.
+- If you do publish it, terminate HTTPS at the proxy and enable the built-in `APP_AUTH_*` gate.
 - Depending on your repository and package settings, you may need to make the first GHCR package public in GitHub Packages before anonymous pulls work.
 

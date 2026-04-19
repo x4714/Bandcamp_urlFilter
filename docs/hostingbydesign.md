@@ -24,10 +24,11 @@ Running `./setup-hbd.sh` will:
 1. find a Python 3.10+ interpreter, or bootstrap one with `pyenv` if needed
 2. create or reuse `~/.config/venv/bandcamp-urlfilter`
 3. install `requirements.txt`
-4. create `.env` from `.env.example` if it does not exist yet
-5. pick an available port from `8501-8999` unless you provide one
-6. write a user service to `~/.config/systemd/user/bandcamp-urlfilter.service`
-7. enable and start the service with `systemctl --user`
+4. require and configure built-in app auth for the current shell user when you are exposing the app on a public-facing HBD domain
+5. create `.env` from `.env.example` if it does not exist yet
+6. pick an available port from `10300-10500` unless you provide one
+7. write a user service to `~/.config/systemd/user/bandcamp-urlfilter.service`
+8. enable and start the service with `systemctl --user`
 
 The script also stores its resolved settings in `~/.config/bandcamp-urlfilter/install.env`.
 
@@ -78,9 +79,36 @@ Disable automatic `pyenv` bootstrap:
 ./setup-hbd.sh --skip-pyenv-bootstrap
 ```
 
+Force auth setup, or skip it only for localhost-style installs:
+
+```bash
+./setup-hbd.sh --enable-auth
+./setup-hbd.sh --disable-auth
+```
+
 ## Accessing the App
 
-By default the service binds to `127.0.0.1`. That is the safer default for shared boxes.
+By default the service binds to `0.0.0.0` because HBD typically reverse proxies the app through its public `itsby.design` domain.
+
+If you are exposing the app publicly, `setup-hbd.sh` now requires built-in app auth for the current shell user and writes these settings into `.env`:
+
+```bash
+APP_AUTH_ENABLED=1
+APP_AUTH_USERNAME="$(whoami)"
+APP_AUTH_PASSWORD_HASH=pbkdf2_sha256$...
+```
+
+The script now rejects empty passwords, passwords shorter than 16 characters, passwords containing whitespace, and passwords that match the username.
+
+When auth is enabled, the app also expires authenticated sessions after 12 hours by default and locks sign-in for 15 minutes after 5 failed attempts. You can tune that with:
+
+```bash
+APP_AUTH_SESSION_TTL_SECONDS=43200
+APP_AUTH_MAX_FAILURES=5
+APP_AUTH_LOCKOUT_SECONDS=900
+```
+
+If you do not want required app auth, do not expose the app via the public domain. Bind it to localhost instead:
 
 Use an SSH tunnel from your local machine:
 

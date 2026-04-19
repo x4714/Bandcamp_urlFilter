@@ -46,6 +46,9 @@ services:
     environment:
       QOBUZ_USER_AUTH_TOKEN: ${QOBUZ_USER_AUTH_TOKEN}
       QOBUZ_APP_ID: ${QOBUZ_APP_ID:-}
+      APP_AUTH_ENABLED: ${APP_AUTH_ENABLED:-0}
+      APP_AUTH_USERNAME: ${APP_AUTH_USERNAME:-}
+      APP_AUTH_PASSWORD_HASH: ${APP_AUTH_PASSWORD_HASH:-}
     volumes:
       - ./exports:/app/exports
       - ./docker-data/config:/config
@@ -91,6 +94,13 @@ Example:
 PYTHONPATH=.
 # QOBUZ_APP_ID=
 QOBUZ_USER_AUTH_TOKEN=your_qobuz_token_here
+# Optional public app auth:
+APP_AUTH_ENABLED=0
+APP_AUTH_USERNAME=
+APP_AUTH_PASSWORD_HASH=
+APP_AUTH_SESSION_TTL_SECONDS=43200
+APP_AUTH_MAX_FAILURES=5
+APP_AUTH_LOCKOUT_SECONDS=900
 # Optional tracker/upload helpers:
 RED_API_KEY=
 RED_SESSION_COOKIE=
@@ -104,6 +114,8 @@ Notes:
 
 - `QOBUZ_USER_AUTH_TOKEN` is required for live Qobuz matching.
 - `QOBUZ_APP_ID` is optional. If it is missing, the app tries to discover it from the Qobuz web player.
+- `APP_AUTH_*` is optional, but strongly recommended if the app will be reachable on the public web.
+- Built-in app auth now expires authenticated sessions after 12 hours by default and locks sign-in after 5 failed attempts for 15 minutes.
 - tracker credentials are optional and only needed for duplicate checking / upload helper features
 - `.env` is ignored by Git.
 
@@ -150,7 +162,7 @@ The repo also includes:
 - [docker-compose.ghcr.yml](docker-compose.ghcr.yml)
 - [docker/entrypoint.sh](docker/entrypoint.sh)
 
-The compose services pick up `QOBUZ_APP_ID` and `QOBUZ_USER_AUTH_TOKEN` from your shell environment or the project `.env` file if present.
+The compose services pick up `QOBUZ_APP_ID`, `QOBUZ_USER_AUTH_TOKEN`, and optional `APP_AUTH_*` settings from your shell environment or the project `.env` file if present.
 
 Automated image publishing:
 
@@ -225,6 +237,7 @@ What it does:
 
 - creates a reusable virtualenv in `~/.config/venv/bandcamp-urlfilter`
 - installs dependencies
+- requires and configures built-in app auth for the current shell user when the app is being exposed on a public HBD domain
 - creates `.env` from `.env.example` if needed
 - chooses an available port
 - writes a user `systemd` service
@@ -235,10 +248,14 @@ Useful options:
 ```bash
 ./setup-hbd.sh --port 8765
 ./setup-hbd.sh --bind 0.0.0.0
+./setup-hbd.sh --enable-auth
+./setup-hbd.sh --disable-auth   # only valid with localhost-style binds
 ./setup-hbd.sh --no-start
 ```
 
 More details live in [docs/hostingbydesign.md](docs/hostingbydesign.md).
+
+If you expose the app directly or through a public reverse proxy on HBD, built-in app auth is required and you should terminate HTTPS at the proxy. The built-in gate is intended as a lightweight single-user login, not a substitute for TLS or a full identity provider.
 
 ## In-App Workflow
 
