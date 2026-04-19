@@ -4,4 +4,4 @@ rapidfuzz>=3.6.1
 python-dotenv>=1.0.1
 aiohttp>=3.9.3
 pandas>=2.0.0
-git+https://github.com/nathom/streamrip.git@v2.2.0
+git+https://github.com/nathom/streamrip.git@v2.2.0 ; python_version >= "3.10" and python_version < "3.14"

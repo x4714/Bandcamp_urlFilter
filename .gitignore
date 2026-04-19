@@ -48,3 +48,4 @@ run_rip.sh
 exports/*.log
 .debug/
 docker-data/
+.tmp

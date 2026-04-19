@@ -157,6 +157,7 @@ docker compose -f docker-compose.ghcr.yml down
 
 - The image installs `git`, `curl`, `flac`, `sox`, `lame`, and `mp3val` so the UI's setup assistants have the expected base tools available.
 - Exported URL batches are written to `/app/exports` and the generated `run_rip.sh` / `run_rip.bat` helper scripts are written to `/app`.
+- Docker is currently the easiest way to keep the full rip/download workflow available if your host machine is using Python 3.14+.
 - If you want to keep the app private, do not publish port `8501` beyond your reverse proxy or SSH tunnel.
 - Depending on your repository and package settings, you may need to make the first GHCR package public in GitHub Packages before anonymous pulls work.
 

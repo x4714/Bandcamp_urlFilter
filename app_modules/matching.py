@@ -1,16 +1,17 @@
 import asyncio
 import os
-import sys
-from datetime import datetime, timezone
+from typing import List, Optional
 
 import aiohttp
-
-from typing import List, Optional, Dict, Any
 
 from app_modules.debug_logging import emit_debug
 from logic.gazelle_api import GazelleAPI
 from logic.metadata_scraper import HostRateLimiter, scrape_bandcamp_metadata
 from logic.qobuz_matcher import match_album
+
+STATUS_ERROR_SCRAPING = "⚠️ Error scraping Bandcamp"
+STATUS_MATCHED = "✅ Matched"
+STATUS_NO_MATCH = "❌ No Match on Qobuz"
 
 
 def _matching_debug(message: str) -> None:
@@ -54,7 +55,7 @@ async def process_single_entry(
             "Album": entry.title,
             "Bandcamp Link": entry.url,
             "Qobuz Link": "",
-            "Status": "⚠️ Error scraping Bandcamp",
+            "Status": STATUS_ERROR_SCRAPING,
         }
 
     match_data = await match_album(session, bc_data)
@@ -63,16 +64,16 @@ async def process_single_entry(
         artist = match_data.get("qobuz_artist") or bc_data.get("artist")
         album = match_data.get("qobuz_album") or bc_data.get("album")
         upc = match_data.get("upc")
-        
-        status = "✅ Matched"
+
+        status = STATUS_MATCHED
         if trackers:
             results = []
             for tracker in trackers:
                 is_dupe, info = await tracker.search_duplicates(artist, album, upc=upc)
                 if info:
-                    # info now contains descriptive messages like "Dupe (UPC) @ RED"
+                    # info contains descriptive messages like "Dupe (UPC) @ RED"
                     results.append(info)
-            
+
             if results:
                 status += " | " + " | ".join(results)
 
@@ -91,7 +92,7 @@ async def process_single_entry(
         "Album": bc_data.get("album"),
         "Bandcamp Link": bc_data.get("url"),
         "Qobuz Link": "",
-        "Status": "❌ No Match on Qobuz",
+        "Status": STATUS_NO_MATCH,
     }
 
 
@@ -99,10 +100,10 @@ async def process_batch(entries, progress_callback=None, check_dupes: bool = Fal
     _matching_debug(f"process_batch() called with {len(entries)} entry(ies), check_dupes={check_dupes}.")
     concurrency = _env_int("BANDCAMP_CONCURRENCY", 2)
     min_interval_seconds = _env_float("BANDCAMP_MIN_INTERVAL_SECONDS", 1.0)
-    
+
     trackers = existing_trackers or []
     trackers_created_locally = False
-    
+
     if check_dupes and not trackers:
         trackers_created_locally = True
         # Load credentials from env
@@ -110,7 +111,7 @@ async def process_batch(entries, progress_callback=None, check_dupes: bool = Fal
         ops_key = os.getenv("OPS_API_KEY", "")
         red_url = os.getenv("RED_URL", "https://redacted.sh").rstrip("/")
         ops_url = os.getenv("OPS_URL", "https://orpheus.network").rstrip("/")
-        
+
         if red_key:
             trackers.append(GazelleAPI("RED", red_url, api_key=red_key))
         if ops_key:
@@ -146,8 +147,8 @@ async def process_batch(entries, progress_callback=None, check_dupes: bool = Fal
             _matching_debug(f"process_batch() completed: processed={done}, total={total}.")
             return rows
         finally:
-            # Only close tracker sessions if we created them here.
-            # Otherwise, the caller (who passed existing_trackers) is responsible.
             if trackers_created_locally:
+                # Only close tracker sessions if we created them here.
+                # Otherwise, the caller (who passed existing_trackers) is responsible.
                 for tracker in trackers:
                     await tracker.close()

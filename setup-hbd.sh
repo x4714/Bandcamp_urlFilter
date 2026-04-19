@@ -14,6 +14,10 @@ PORT_FILE="${STATE_DIR}/port"
 BIND_ADDRESS="${BIND_ADDRESS:-127.0.0.1}"
 PORT="${PORT:-}"
 NO_START=0
+PYTHON_BIN="${PYTHON_BIN:-}"
+PYENV_ROOT="${PYENV_ROOT:-$HOME/.local/opt/pyenv}"
+PYENV_PYTHON_VERSION="${PYENV_PYTHON_VERSION:-3.11.11}"
+SKIP_PYENV_BOOTSTRAP="${SKIP_PYENV_BOOTSTRAP:-0}"
 
 usage() {
   cat <<'EOF'
@@ -26,6 +30,7 @@ Options:
   --venv <path>           Override the virtualenv path.
   --app-dir <path>        Override the repository/app directory.
   --env-file <path>       Override the .env path.
+  --skip-pyenv-bootstrap  Do not auto-install pyenv when only Python <3.10 is available.
   --no-start              Write/update the service without starting it.
   -h, --help              Show this help text.
 EOF
@@ -57,6 +62,10 @@ while [[ $# -gt 0 ]]; do
       ENV_FILE="$2"
       shift 2
       ;;
+    --skip-pyenv-bootstrap)
+      SKIP_PYENV_BOOTSTRAP=1
+      shift
+      ;;
     --no-start)
       NO_START=1
       shift
@@ -85,8 +94,121 @@ require_command() {
   fi
 }
 
+python_version_ok() {
+  local candidate="$1"
+  "$candidate" - <<'PY' >/dev/null 2>&1
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
+PY
+}
+
+python_version_string() {
+  local candidate="$1"
+  "$candidate" - <<'PY'
+import sys
+print(".".join(str(part) for part in sys.version_info[:3]))
+PY
+}
+
+pyenv_bin() {
+  printf '%s\n' "${PYENV_ROOT}/bin/pyenv"
+}
+
+pyenv_available() {
+  [[ -x "$(pyenv_bin)" ]]
+}
+
+install_pyenv() {
+  if pyenv_available; then
+    return 0
+  fi
+
+  require_command git
+  mkdir -p "$(dirname "$PYENV_ROOT")"
+  echo "No Python 3.10+ interpreter was found on PATH."
+  echo "Bootstrapping pyenv into ${PYENV_ROOT}..."
+  git clone https://github.com/pyenv/pyenv.git "$PYENV_ROOT"
+}
+
+ensure_pyenv_python() {
+  local pyenv_cmd
+  pyenv_cmd="$(pyenv_bin)"
+
+  if ! pyenv_available; then
+    install_pyenv
+  fi
+
+  export PYENV_ROOT
+  export PATH="${PYENV_ROOT}/bin:${PATH}"
+
+  if ! "$pyenv_cmd" versions --bare | grep -Fxq "$PYENV_PYTHON_VERSION"; then
+    echo "Installing Python ${PYENV_PYTHON_VERSION} with pyenv..."
+    mkdir -p "$HOME/.tmp"
+    export TMPDIR="$HOME/.tmp"
+    if ! "$pyenv_cmd" install "$PYENV_PYTHON_VERSION"; then
+      echo "pyenv could not build Python ${PYENV_PYTHON_VERSION}." >&2
+      echo "Your box may be missing compiler/runtime dependencies required for source builds." >&2
+      echo "If HostingByDesign provides a newer interpreter already, rerun with for example:" >&2
+      echo "  PYTHON_BIN=python3.11 ./setup-hbd.sh" >&2
+      echo "Otherwise use Docker, or ask the host which Python 3.10+ binary is available." >&2
+      return 1
+    fi
+  fi
+
+  PYTHON_BIN="${PYENV_ROOT}/versions/${PYENV_PYTHON_VERSION}/bin/python3"
+  echo "Using pyenv-managed Python: ${PYTHON_BIN}"
+}
+
+pick_python() {
+  local candidates=()
+  local candidate=""
+  local found_old=()
+
+  if [[ -n "${PYTHON_BIN}" ]]; then
+    candidates+=("${PYTHON_BIN}")
+  fi
+
+  candidates+=(
+    python3.13
+    python3.12
+    python3.11
+    python3.10
+    python3
+    python
+  )
+
+  for candidate in "${candidates[@]}"; do
+    if ! command -v "$candidate" >/dev/null 2>&1; then
+      continue
+    fi
+    if python_version_ok "$candidate"; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+    found_old+=("$candidate")
+  done
+
+  if [[ "${#found_old[@]}" -gt 0 ]]; then
+    echo "Found Python interpreter(s), but none are new enough: ${found_old[*]}" >&2
+  else
+    echo "Python 3.10+ was not found on PATH." >&2
+  fi
+
+  if [[ "$SKIP_PYENV_BOOTSTRAP" == "1" ]]; then
+    echo "Bandcamp URL Filter requires Python 3.10+." >&2
+    echo "Automatic pyenv bootstrap is disabled." >&2
+    echo "Rerun with for example:" >&2
+    echo "  PYTHON_BIN=python3.11 ./setup-hbd.sh" >&2
+    echo "Or allow pyenv bootstrap by omitting --skip-pyenv-bootstrap." >&2
+    return 1
+  fi
+
+  ensure_pyenv_python || return 1
+  printf '%s\n' "$PYTHON_BIN"
+}
+
 pick_port() {
-  python3 - "${1:-8501}" "${2:-8999}" <<'PY'
+  "$PYTHON_BIN" - "${1:-8501}" "${2:-8999}" <<'PY'
 import socket
 import sys
 
@@ -107,8 +229,8 @@ else:
 PY
 }
 
-require_command python3
 require_command systemctl
+PYTHON_BIN="$(pick_python)"
 
 mkdir -p "$CONFIG_HOME" "$STATE_DIR" "$SYSTEMD_DIR" "$APP_DIR/exports"
 
@@ -127,18 +249,32 @@ fi
 
 echo "Preparing ${APP_NAME} for a HostingByDesign-style user service..."
 echo "App directory: ${APP_DIR}"
+echo "Python: ${PYTHON_BIN}"
 echo "Virtualenv: ${VENV_DIR}"
 echo "Service: ${SERVICE_NAME}"
 echo "Bind: ${BIND_ADDRESS}:${PORT}"
+if [[ "$PYTHON_BIN" == "${PYENV_ROOT}/versions/"* ]]; then
+  echo "Python source: pyenv (${PYENV_PYTHON_VERSION})"
+fi
 
 if [[ ! -d "$VENV_DIR" ]]; then
   echo "Creating virtual environment..."
-  python3 -m venv "$VENV_DIR"
+  "$PYTHON_BIN" -m venv "$VENV_DIR"
 fi
 
+if ! python_version_ok "${VENV_DIR}/bin/python"; then
+  echo "Existing virtualenv is not using Python 3.10+; recreating ${VENV_DIR}..."
+  rm -rf "$VENV_DIR"
+  "$PYTHON_BIN" -m venv "$VENV_DIR"
+fi
+
+VENV_PYTHON="${VENV_DIR}/bin/python"
+VENV_PYTHON_VERSION="$(python_version_string "$VENV_PYTHON")"
+echo "Virtualenv Python: ${VENV_PYTHON_VERSION}"
+
 echo "Installing Python dependencies..."
-"${VENV_DIR}/bin/python" -m pip install --upgrade pip
-"${VENV_DIR}/bin/python" -m pip install -r "${APP_DIR}/requirements.txt"
+"${VENV_PYTHON}" -m pip install --upgrade pip
+"${VENV_PYTHON}" -m pip install -r "${APP_DIR}/requirements.txt"
 
 if [[ ! -f "$ENV_FILE" && -f "$EXAMPLE_ENV_FILE" ]]; then
   cp "$EXAMPLE_ENV_FILE" "$ENV_FILE"
@@ -157,7 +293,7 @@ Environment=HOME=${HOME}
 Environment=PYTHONPATH=${APP_DIR}
 Environment=XDG_CONFIG_HOME=${CONFIG_HOME}
 Environment=STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
-ExecStart=${VENV_DIR}/bin/python -m streamlit run ${APP_DIR}/app.py --server.headless=true --server.address=${BIND_ADDRESS} --server.port=${PORT}
+ExecStart=${VENV_PYTHON} -m streamlit run ${APP_DIR}/app.py --server.headless=true --server.address=${BIND_ADDRESS} --server.port=${PORT}
 Restart=on-failure
 RestartSec=5
 
@@ -170,6 +306,7 @@ APP_DIR=${APP_DIR}
 ENV_FILE=${ENV_FILE}
 PORT=${PORT}
 BIND_ADDRESS=${BIND_ADDRESS}
+PYTHON_BIN=${PYTHON_BIN}
 SERVICE_NAME=${SERVICE_NAME}
 SERVICE_FILE=${SERVICE_FILE}
 VENV_DIR=${VENV_DIR}

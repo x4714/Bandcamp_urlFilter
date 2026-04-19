@@ -113,6 +113,13 @@ Notes:
 - `pip`
 - Git available on `PATH` if you install from `requirements.txt` because `streamrip` is pulled from GitHub
 
+Python compatibility notes:
+
+- the core Streamlit app boots on Python 3.10+
+- the optional bundled `streamrip` CLI currently installs automatically on Python 3.10-3.13
+- on Python 3.14+, the app still runs, but `streamrip==2.2.0` is skipped because its current dependency set does not install cleanly there
+- if you need the in-app rip/download flow on Python 3.14+, use Docker or a Python 3.10-3.13 virtualenv for now
+
 Optional but useful for ripping/upload workflows:
 
 - `flac`
@@ -161,6 +168,13 @@ Automated image publishing:
 
 Each launcher creates `.venv` if needed, installs dependencies, warns when Qobuz auth is missing, and starts Streamlit.
 
+Launcher notes:
+
+- `run.sh` uses `python` when available and falls back to `python3`
+- `run.bat` uses `python` and falls back to `py -3`
+- if an earlier failed bootstrap left behind a partial `.venv`, the launchers recreate it
+- on Python 3.14+, the app starts normally but the optional `streamrip` CLI is not installed automatically
+
 #### Manual path
 
 ```bash
@@ -198,6 +212,15 @@ chmod +x setup-hbd.sh
 ./setup-hbd.sh
 ```
 
+HostingByDesign note:
+
+- many HBD boxes expose `python3.9.2` by default, which is too old for this app
+- `setup-hbd.sh` first looks for `python3.10+` automatically
+- if it only finds Python 3.9 or nothing suitable on `PATH`, it now bootstraps `pyenv` in `~/.local/opt/pyenv` and builds a userland Python automatically
+- if your box has a newer interpreter at a specific name, run for example `PYTHON_BIN=python3.11 ./setup-hbd.sh`
+- if you do not want that fallback, run `./setup-hbd.sh --skip-pyenv-bootstrap`
+- `smoked-salmon` should still be installed separately with `uv`, which manages its own Python/runtime isolation
+
 What it does:
 
 - creates a reusable virtualenv in `~/.config/venv/bandcamp-urlfilter`
@@ -233,6 +256,7 @@ If you need to stop a run, use `Stop / Cancel` to finish the current in-flight b
 - export files are written to `exports/`
 - the app generates `run_rip.sh` and `run_rip.bat` in the repo root; those helper scripts read the batch files from `exports/`
 - `streamrip` is included in `requirements.txt`
+- on Python 3.14+, the repo skips installing the bundled `streamrip` CLI until upstream support lands
 - `smoked-salmon` can be installed with:
 
 ```bash

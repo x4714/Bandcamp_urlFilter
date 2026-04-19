@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 
 from app_modules.debug_logging import emit_debug
 from app_modules.filtering import build_filtered_entries, get_download_link
-from app_modules.matching import process_batch, process_single_entry
+from app_modules.matching import process_batch
 from app_modules.streamrip import export_qobuz_batches, run_streamrip_batches
 from logic.gazelle_api import GazelleAPI
 
@@ -137,6 +137,7 @@ def run_processing_tick() -> None:
         _ui_processing_debug("Cancellation requested; ending processing loop.")
         st.session_state.processing = False
         st.session_state.process_complete = False
+        st.session_state.batch_trackers = []
         
         matched_count = len([r for r in st.session_state.results if r["Qobuz Link"]])
         detail_box.caption(
@@ -320,6 +321,9 @@ def render_results_and_exports(
                             st.session_state.results = new_results
                         except Exception as e:
                             st.error(f"Error during manual check: {e}")
+                        finally:
+                            for tracker in trackers:
+                                await tracker.close()
 
                     asyncio.run(run_manual_check())
                     status.update(label="Dupe check complete.", state="complete")
@@ -536,10 +540,14 @@ def run_tracker_diagnostic(artist: str, album: str, upc: Optional[str] = None) -
 
     async def _do_diagnostic():
         results = []
-        for tracker in trackers:
-            with st.spinner(f"Querying {tracker.site_name}..."):
-                is_dupe, message = await tracker.search_duplicates(artist, album, upc=upc)
-                results.append((tracker.site_name, is_dupe, message))
+        try:
+            for tracker in trackers:
+                with st.spinner(f"Querying {tracker.site_name}..."):
+                    is_dupe, message = await tracker.search_duplicates(artist, album, upc=upc)
+                    results.append((tracker.site_name, is_dupe, message))
+        finally:
+            for tracker in trackers:
+                await tracker.close()
         return results
 
     diag_results = asyncio.run(_do_diagnostic())
