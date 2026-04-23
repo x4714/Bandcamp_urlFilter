@@ -22,6 +22,9 @@ This tool helps you:
 - `Streamlit` web UI
 - Bandcamp URL filtering and metadata scraping
 - Qobuz matching with `rapidfuzz`
+- optional 24-bit / hi-res filter (skip albums not available in lossless hi-res on Qobuz)
+- configurable concurrency, request delay, and per-service retry/back-off via the UI
+- optional per-service proxy routing (`GLOBAL_PROXY`, `BANDCAMP_PROXY`, `QOBUZ_PROXY`, `TRACKER_PROXY`)
 - Dry Run mode for filtering without Qobuz requests
 - export helpers for `streamrip`
 - direct Streamrip tab inside the app
@@ -108,6 +111,11 @@ RED_SESSION_COOKIE=
 OPS_API_KEY=
 OPS_SESSION_COOKIE=
 # OPS_URL=https://orpheus.network
+# Optional proxy settings (all default off):
+# GLOBAL_PROXY=http://user:pass@host:port
+# BANDCAMP_PROXY=http://user:pass@host:port
+# QOBUZ_PROXY=http://user:pass@host:port
+# TRACKER_PROXY=http://user:pass@host:port
 ```
 
 Notes:
@@ -117,6 +125,7 @@ Notes:
 - `APP_AUTH_*` is optional, but strongly recommended if the app will be reachable on the public web.
 - Built-in app auth now expires authenticated sessions after 12 hours by default and locks sign-in after 5 failed attempts for 15 minutes.
 - tracker credentials are optional and only needed for duplicate checking / upload helper features
+- proxy vars are all optional and off by default. `GLOBAL_PROXY` is the fallback for every service; service-specific vars (`BANDCAMP_PROXY`, `QOBUZ_PROXY`, `TRACKER_PROXY`) override it for that service only. Supported schemes: `http://`, `https://`, `socks5://`.
 - `.env` is ignored by Git.
 
 ## Requirements
@@ -261,10 +270,12 @@ If you expose the app directly or through a public reverse proxy on HBD, built-i
 
 1. open the app in your browser
 2. upload a `.txt` or `.log` file containing Bandcamp URLs
-3. set your filters
-4. click `Process`
-5. export matched Qobuz URLs if needed
-6. optionally run Streamrip or Smoked Salmon from their UI tabs
+3. set your filters — pricing, date range, genre, track count, etc.
+4. optionally toggle **Only 24-bit** to restrict Qobuz results to hi-res albums
+5. optionally expand **Rate Limits & Retries** in the sidebar to tune concurrency, request delay, and per-service retry back-off
+6. click `Process`
+7. export matched Qobuz URLs if needed
+8. optionally run Streamrip or Smoked Salmon from their UI tabs
 
 If you need to stop a run, use `Stop / Cancel` to finish the current in-flight batch and keep partial results.
 

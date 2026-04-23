@@ -7,6 +7,7 @@ import aiohttp
 from app_modules.debug_logging import emit_debug
 from logic.gazelle_api import GazelleAPI
 from logic.metadata_scraper import HostRateLimiter, scrape_bandcamp_metadata
+from logic.proxy_utils import get_proxy
 from logic.qobuz_matcher import match_album
 
 STATUS_ERROR_SCRAPING = "⚠️ Error scraping Bandcamp"
@@ -44,10 +45,21 @@ async def process_single_entry(
     rate_limiter: HostRateLimiter,
     semaphore: asyncio.Semaphore,
     trackers: Optional[List[GazelleAPI]] = None,
+    only_24bit: bool = False,
+    qobuz_max_retries: int = 3,
+    qobuz_base_delay: float = 10.0,
+    bc_max_retries: int = 5,
+    bc_base_delay: float = 10.0,
+    bandcamp_proxy: Optional[str] = None,
+    qobuz_proxy: Optional[str] = None,
 ):
     _matching_debug(f"Processing single entry: `{entry.url}`")
     async with semaphore:
-        bc_data = await scrape_bandcamp_metadata(entry.url, session, rate_limiter=rate_limiter)
+        bc_data = await scrape_bandcamp_metadata(
+            entry.url, session, rate_limiter=rate_limiter,
+            max_retries=bc_max_retries, base_delay=bc_base_delay,
+            proxy=bandcamp_proxy,
+        )
     if bc_data.get("status") != "success":
         _matching_debug(f"Bandcamp scrape failed for `{entry.url}`.")
         return {
@@ -58,7 +70,11 @@ async def process_single_entry(
             "Status": STATUS_ERROR_SCRAPING,
         }
 
-    match_data = await match_album(session, bc_data)
+    match_data = await match_album(
+        session, bc_data, only_24bit=only_24bit,
+        max_retries=qobuz_max_retries, base_delay=qobuz_base_delay,
+        proxy=qobuz_proxy,
+    )
     if match_data.get("status") == "matched":
         _matching_debug(f"Match found for `{entry.url}`.")
         artist = match_data.get("qobuz_artist") or bc_data.get("artist")
@@ -71,7 +87,6 @@ async def process_single_entry(
             for tracker in trackers:
                 is_dupe, info = await tracker.search_duplicates(artist, album, upc=upc)
                 if info:
-                    # info contains descriptive messages like "Dupe (UPC) @ RED"
                     results.append(info)
 
             if results:
@@ -96,17 +111,35 @@ async def process_single_entry(
     }
 
 
-async def process_batch(entries, progress_callback=None, check_dupes: bool = False, existing_trackers: Optional[List[GazelleAPI]] = None):
+async def process_batch(
+    entries,
+    progress_callback=None,
+    check_dupes: bool = False,
+    existing_trackers: Optional[List[GazelleAPI]] = None,
+    only_24bit: bool = False,
+    concurrency: Optional[int] = None,
+    min_interval_seconds: Optional[float] = None,
+    qobuz_max_retries: Optional[int] = None,
+    qobuz_base_delay: Optional[float] = None,
+    bc_max_retries: Optional[int] = None,
+    bc_base_delay: Optional[float] = None,
+):
     _matching_debug(f"process_batch() called with {len(entries)} entry(ies), check_dupes={check_dupes}.")
-    concurrency = _env_int("BANDCAMP_CONCURRENCY", 2)
-    min_interval_seconds = _env_float("BANDCAMP_MIN_INTERVAL_SECONDS", 1.0)
+    concurrency = int(concurrency) if concurrency is not None else _env_int("BANDCAMP_CONCURRENCY", 2)
+    min_interval_seconds = float(min_interval_seconds) if min_interval_seconds is not None else _env_float("BANDCAMP_MIN_INTERVAL_SECONDS", 1.0)
+    qobuz_max_retries = int(qobuz_max_retries) if qobuz_max_retries is not None else 3
+    qobuz_base_delay = float(qobuz_base_delay) if qobuz_base_delay is not None else 10.0
+    bc_max_retries = int(bc_max_retries) if bc_max_retries is not None else 5
+    bc_base_delay = float(bc_base_delay) if bc_base_delay is not None else 10.0
+
+    bandcamp_proxy = get_proxy("bandcamp")
+    qobuz_proxy = get_proxy("qobuz")
 
     trackers = existing_trackers or []
     trackers_created_locally = False
 
     if check_dupes and not trackers:
         trackers_created_locally = True
-        # Load credentials from env
         red_key = os.getenv("RED_API_KEY", "")
         ops_key = os.getenv("OPS_API_KEY", "")
         red_url = os.getenv("RED_URL", "https://redacted.sh").rstrip("/")
@@ -118,7 +151,9 @@ async def process_batch(entries, progress_callback=None, check_dupes: bool = Fal
             trackers.append(GazelleAPI("OPS", ops_url, api_key=ops_key))
 
     _matching_debug(
-        f"Matching runtime config: concurrency={concurrency}, min_interval_seconds={min_interval_seconds}, trackers={len(trackers)}."
+        f"Matching runtime config: concurrency={concurrency}, min_interval_seconds={min_interval_seconds}, "
+        f"qobuz_max_retries={qobuz_max_retries}, qobuz_base_delay={qobuz_base_delay}, trackers={len(trackers)}, "
+        f"bandcamp_proxy={'set' if bandcamp_proxy else 'none'}, qobuz_proxy={'set' if qobuz_proxy else 'none'}."
     )
     semaphore = asyncio.Semaphore(concurrency)
     rate_limiter = HostRateLimiter(min_interval_seconds=min_interval_seconds)
@@ -132,7 +167,13 @@ async def process_batch(entries, progress_callback=None, check_dupes: bool = Fal
     async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
         try:
             tasks = [
-                asyncio.create_task(process_single_entry(session, entry, rate_limiter, semaphore, trackers=trackers))
+                asyncio.create_task(process_single_entry(
+                    session, entry, rate_limiter, semaphore,
+                    trackers=trackers, only_24bit=only_24bit,
+                    qobuz_max_retries=qobuz_max_retries, qobuz_base_delay=qobuz_base_delay,
+                    bc_max_retries=bc_max_retries, bc_base_delay=bc_base_delay,
+                    bandcamp_proxy=bandcamp_proxy, qobuz_proxy=qobuz_proxy,
+                ))
                 for entry in entries
             ]
             rows = []
@@ -148,7 +189,5 @@ async def process_batch(entries, progress_callback=None, check_dupes: bool = Fal
             return rows
         finally:
             if trackers_created_locally:
-                # Only close tracker sessions if we created them here.
-                # Otherwise, the caller (who passed existing_trackers) is responsible.
                 for tracker in trackers:
                     await tracker.close()

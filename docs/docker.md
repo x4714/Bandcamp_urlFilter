@@ -131,6 +131,7 @@ Optional extras you can also keep in `.env`:
 - `APP_AUTH_SESSION_TTL_SECONDS`, `APP_AUTH_MAX_FAILURES`, and `APP_AUTH_LOCKOUT_SECONDS` if you want to tune session expiry or lockout behavior
 - `RED_API_KEY` / `RED_SESSION_COOKIE` and `OPS_API_KEY` / `OPS_SESSION_COOKIE` for duplicate checking and upload helpers
 - `RED_URL` and `OPS_URL` if you use non-default tracker domains
+- `GLOBAL_PROXY`, `BANDCAMP_PROXY`, `QOBUZ_PROXY`, and `TRACKER_PROXY` for per-service proxy routing (all default off; supported schemes: `http://`, `https://`, `socks5://`)
 
 ## Useful Commands
 
