@@ -71,13 +71,15 @@ async def fetch_with_retries(
     max_retries: int = 5,
     base_delay: float = 2.0,
     rate_limiter: Optional[HostRateLimiter] = None,
+    proxy: Optional[str] = None,
 ) -> str:
     """Fetches text with exponential backoff on failure."""
+    _proxy = proxy or None
     for attempt in range(max_retries):
         try:
             if rate_limiter is not None:
                 await rate_limiter.wait(url)
-            async with session.get(url, timeout=REQUEST_TIMEOUT) as response:
+            async with session.get(url, timeout=REQUEST_TIMEOUT, proxy=_proxy) as response:
                 if response.status == 200:
                     return await response.text()
                 elif response.status in (429, 500, 502, 503, 504):
@@ -113,8 +115,11 @@ async def scrape_bandcamp_metadata(
     url: str,
     session: aiohttp.ClientSession,
     rate_limiter: Optional[HostRateLimiter] = None,
+    max_retries: int = 5,
+    base_delay: float = 10.0,
+    proxy: Optional[str] = None,
 ) -> dict:
-    html = await fetch_with_retries(session, url, rate_limiter=rate_limiter)
+    html = await fetch_with_retries(session, url, max_retries=max_retries, base_delay=base_delay, rate_limiter=rate_limiter, proxy=proxy)
     if not html:
         return {}
         

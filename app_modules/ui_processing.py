@@ -36,6 +36,7 @@ def handle_process_submission(
     start_date,
     end_date,
     dry_run: bool,
+    rate_limit_config: dict | None = None,
 ) -> None:
     if not process_btn:
         return
@@ -56,6 +57,7 @@ def handle_process_submission(
     st.session_state.results = []
     st.session_state.is_dry_run_run = False
     st.session_state.dry_run_results = []
+    st.session_state.rate_limit_config = dict(rate_limit_config or {})
 
     stringio = StringIO(uploaded_file.getvalue().decode("utf-8", errors="ignore"))
     lines = stringio.readlines()
@@ -96,6 +98,7 @@ def handle_process_submission(
     st.session_state.processing = True
     st.session_state.check_red = filter_config.get("check_red", False)
     st.session_state.check_ops = filter_config.get("check_ops", False)
+    st.session_state.only_24bit = filter_config.get("only_24bit", False)
     
     # Initialize trackers if needed
     st.session_state.batch_trackers = []
@@ -169,12 +172,21 @@ def run_processing_tick() -> None:
 
             check_red_flag = st.session_state.get("check_red", False)
             check_ops_flag = st.session_state.get("check_ops", False)
+            only_24bit_flag = st.session_state.get("only_24bit", False)
             batch_trackers = st.session_state.get("batch_trackers", [])
+            _rl = dict(st.session_state.get("rate_limit_config") or {})
             batch_rows = asyncio.run(process_batch(
-                batch, 
-                progress_callback=_on_batch_progress, 
+                batch,
+                progress_callback=_on_batch_progress,
                 check_dupes=(check_red_flag or check_ops_flag),
-                existing_trackers=batch_trackers
+                existing_trackers=batch_trackers,
+                only_24bit=only_24bit_flag,
+                concurrency=_rl.get("concurrency"),
+                min_interval_seconds=_rl.get("request_delay"),
+                qobuz_max_retries=_rl.get("qobuz_retries"),
+                qobuz_base_delay=_rl.get("qobuz_retry_delay"),
+                bc_max_retries=_rl.get("bc_retries"),
+                bc_base_delay=_rl.get("bc_retry_delay"),
             ))
             st.session_state.results.extend(batch_rows)
             st.session_state.current_index = end_idx

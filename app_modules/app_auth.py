@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import os
+import secrets
 import threading
 import time
 
@@ -12,12 +13,19 @@ MIN_PBKDF2_SHA256_ITERATIONS = 390000
 DEFAULT_AUTH_SESSION_TTL_SECONDS = 12 * 60 * 60
 DEFAULT_AUTH_MAX_FAILURES = 5
 DEFAULT_AUTH_LOCKOUT_SECONDS = 15 * 60
+_AUTH_REMEMBER_ME_TTL = 30 * 24 * 60 * 60  # 30 days
 
 _AUTH_STATE_LOCK = threading.Lock()
 _AUTH_STATE: dict[str, float | int] = {
     "failed_attempts": 0,
     "lockout_until": 0.0,
 }
+
+
+@st.cache_resource(show_spinner=False)
+def _get_auth_token_store() -> dict[str, dict]:
+    # Process-level store: {token: {username, login_time, remember, expires}}
+    return {}
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -138,10 +146,58 @@ def _clear_failed_attempts() -> None:
         _AUTH_STATE["lockout_until"] = 0.0
 
 
+def _create_auth_token(username: str, login_time: float, remember: bool) -> str:
+    token = secrets.token_urlsafe(32)
+    ttl = _AUTH_REMEMBER_ME_TTL if remember else auth_session_ttl_seconds()
+    _get_auth_token_store()[token] = {
+        "username": username,
+        "login_time": login_time,
+        "remember": remember,
+        "expires": login_time + ttl,
+    }
+    return token
+
+
+def _validate_auth_token(token: str, configured_user: str, now: float) -> dict | None:
+    store = _get_auth_token_store()
+    data = store.get(token)
+    if not data:
+        return None
+    if data.get("username") != configured_user:
+        return None
+    if data.get("expires", 0) <= now:
+        store.pop(token, None)
+        return None
+    return data
+
+
+def _revoke_auth_token(token: str) -> None:
+    _get_auth_token_store().pop(token, None)
+
+
 def _logout_session() -> None:
+    auth_token = str(st.session_state.get("app_auth_token", "") or "")
+    if not auth_token:
+        auth_token = str(st.query_params.get("_auth", "") or "")
+    if auth_token:
+        _revoke_auth_token(auth_token)
+    try:
+        del st.query_params["_auth"]
+    except (KeyError, Exception):
+        pass
     st.session_state.app_auth_authenticated = False
     st.session_state.app_auth_user = ""
     st.session_state.app_auth_login_time = 0.0
+    st.session_state.app_auth_token = ""
+
+
+def _render_logout_button() -> None:
+    configured_user = auth_username()
+    with st.sidebar:
+        st.caption(f"Signed in as `{configured_user}`")
+        if st.button("Log out", key="app_auth_logout"):
+            _logout_session()
+            st.rerun()
 
 
 def render_auth_gate() -> None:
@@ -160,19 +216,41 @@ def render_auth_gate() -> None:
         st.stop()
 
     now = time.time()
+
+    # 1. Check existing session state (same browser tab, no refresh)
     login_time = float(st.session_state.get("app_auth_login_time", 0.0) or 0.0)
     if st.session_state.get("app_auth_authenticated") and st.session_state.get("app_auth_user") == configured_user:
-        if login_time and now - login_time > auth_session_ttl_seconds():
+        auth_token = str(st.session_state.get("app_auth_token", "") or "")
+        if auth_token:
+            if not _validate_auth_token(auth_token, configured_user, now):
+                _logout_session()
+                st.warning("Your sign-in expired. Please sign in again.")
+                st.stop()
+        elif login_time and now - login_time > auth_session_ttl_seconds():
             _logout_session()
             st.warning("Your sign-in expired. Please sign in again.")
             st.stop()
-        with st.sidebar:
-            st.caption(f"Signed in as `{configured_user}`")
-            if st.button("Log out", key="app_auth_logout"):
-                _logout_session()
-                st.rerun()
+        _render_logout_button()
         return
 
+    # 2. Check URL token (survives page reload; set on login)
+    url_token = str(st.query_params.get("_auth", "") or "")
+    if url_token:
+        token_data = _validate_auth_token(url_token, configured_user, now)
+        if token_data:
+            st.session_state.app_auth_authenticated = True
+            st.session_state.app_auth_user = configured_user
+            st.session_state.app_auth_login_time = float(token_data.get("login_time", now))
+            st.session_state.app_auth_token = url_token
+            _render_logout_button()
+            return
+        # Token invalid/expired — clear it
+        try:
+            del st.query_params["_auth"]
+        except (KeyError, Exception):
+            pass
+
+    # 3. Show login form
     st.title("Bandcamp to Qobuz Matcher")
     st.markdown("Sign in to access this app.")
     remaining_lockout = _remaining_lockout_seconds(now)
@@ -184,6 +262,11 @@ def render_auth_gate() -> None:
     with st.form("app_auth_login_form", clear_on_submit=False):
         username = st.text_input("Username", value="")
         password = st.text_input("Password", value="", type="password")
+        remember = st.checkbox(
+            "Remember me",
+            value=False,
+            help="Keep me signed in for 30 days across browser sessions.",
+        )
         submitted = st.form_submit_button(
             "Sign in",
             use_container_width=True,
@@ -201,9 +284,12 @@ def render_auth_gate() -> None:
         password_ok = verify_password(password, stored_hash)
         if user_ok and password_ok:
             _clear_failed_attempts()
+            token = _create_auth_token(configured_user, now, remember)
             st.session_state.app_auth_authenticated = True
             st.session_state.app_auth_user = configured_user
             st.session_state.app_auth_login_time = now
+            st.session_state.app_auth_token = token
+            st.query_params["_auth"] = token
             st.rerun()
         lockout_seconds = _register_failed_attempt(now)
         if lockout_seconds > 0:

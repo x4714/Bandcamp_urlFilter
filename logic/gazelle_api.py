@@ -4,6 +4,8 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
+from logic.proxy_utils import get_proxy
+
 
 class GazelleAPI:
     def __init__(self, site_name: str, site_url: str, api_key: str = "", rate_limit_seconds: float = 2.0):
@@ -76,6 +78,7 @@ class GazelleAPI:
                     params=params,
                     timeout=15,
                     allow_redirects=False,
+                    proxy=get_proxy("tracker"),
                 ) as response:
                     if response.status == 200:
                         try:

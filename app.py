@@ -20,6 +20,7 @@ from app_modules.streamrip import (
     is_streamrip_installed,
     load_streamrip_settings,
     save_streamrip_settings,
+    update_streamrip_quality_only,
 )
 from app_modules.system_utils import open_in_default_app
 from app_modules.ui_processing import (
@@ -131,6 +132,19 @@ def _render_alert_scroll_if_requested() -> None:
     st.session_state.auto_scroll_alerts_once = False
 
 
+def _on_rip_quality_change() -> None:
+    quality = st.session_state.get("streamrip_runtime_rip_quality")
+    if quality is None or quality not in QUALITY_OPTIONS:
+        return
+    st.session_state.active_rip_quality = quality
+    config_path = get_streamrip_config_path()
+    if config_path and os.path.exists(config_path):
+        ok, msg = update_streamrip_quality_only(config_path, quality)
+        if ok:
+            st.session_state.streamrip_form_quality = quality
+        st.session_state._quality_save_result = (ok, msg)
+
+
 init_session_state()
 init_qobuz_help_state()
 _mount_env_watchdog()
@@ -203,7 +217,14 @@ max_duration = None
 start_date = None
 end_date = None
 free_mode = "All"
+only_24bit = False
 dry_run = False
+ui_concurrency = 2
+ui_request_delay = 1.0
+ui_qobuz_retries = 3
+ui_qobuz_retry_delay = 10.0
+ui_bc_retries = 5
+ui_bc_retry_delay = 10.0
 
 def _open_env_for_qobuz() -> None:
     env_path = ".env"
@@ -225,7 +246,13 @@ OPS_API_KEY=
 OPS_SESSION_COOKIE=
 # Optional tracker base URLs if you do not use the defaults
 # RED_URL=https://redacted.sh
-# OPS_URL=https://orpheus.network"""
+# OPS_URL=https://orpheus.network
+# Optional proxy settings (default off — leave blank or comment out to disable)
+# GLOBAL_PROXY applies to all services; service-specific vars override it for that service only
+# GLOBAL_PROXY=http://user:pass@host:port
+# BANDCAMP_PROXY=http://user:pass@host:port
+# QOBUZ_PROXY=http://user:pass@host:port
+# TRACKER_PROXY=http://user:pass@host:port"""
         try:
             with open(env_path, "w", encoding="utf-8") as f:
                 f.write(template)
@@ -263,6 +290,7 @@ if main_tab == "Bandcamp Matcher":
 
     with st.sidebar.expander("⚙️ Matcher Run Settings", expanded=True):
         free_mode = st.selectbox("Pricing", options=["All", "Free", "Paid"], index=0, help="Filter releases by Bandcamp pricing type.")
+        only_24bit = st.toggle("Only 24-bit", value=False, help="Only collect albums available in 24-bit hi-res on Qobuz.")
         dry_run = st.checkbox("Dry Run", value=False, help="Only apply Bandcamp filter, skip Qobuz search.")
         red_key = os.getenv("RED_API_KEY", "")
         ops_key = os.getenv("OPS_API_KEY", "")
@@ -272,6 +300,38 @@ if main_tab == "Bandcamp Matcher":
             check_red = st.checkbox("Check RED", value=False, help="Check Qobuz matches against Redacted (RED) for duplicates.")
         if ops_key:
             check_ops = st.checkbox("Check OPS", value=False, help="Check Qobuz matches against Orpheus (OPS) for duplicates.")
+
+    with st.sidebar.expander("⏱️ Rate Limits & Retries", expanded=False):
+        ui_concurrency = st.number_input(
+            "Concurrency",
+            min_value=1, max_value=10, value=2, step=1,
+            help="Number of Bandcamp/Qobuz requests to run in parallel.",
+        )
+        ui_request_delay = st.number_input(
+            "Request Delay (s)",
+            min_value=0.0, max_value=30.0, value=1.0, step=0.5, format="%.1f",
+            help="Minimum seconds between requests to the same host.",
+        )
+        ui_qobuz_retries = st.number_input(
+            "Qobuz Retries",
+            min_value=1, max_value=10, value=3, step=1,
+            help="Max retry attempts on Qobuz 429 / 5xx errors.",
+        )
+        ui_qobuz_retry_delay = st.number_input(
+            "Qobuz Retry Base Delay (s)",
+            min_value=0.5, max_value=60.0, value=10.0, step=0.5, format="%.1f",
+            help="Base delay for exponential back-off on Qobuz retries (doubles each attempt).",
+        )
+        ui_bc_retries = st.number_input(
+            "Bandcamp Retries",
+            min_value=1, max_value=15, value=5, step=1,
+            help="Max retry attempts on Bandcamp 429 / 5xx errors.",
+        )
+        ui_bc_retry_delay = st.number_input(
+            "Bandcamp Retry Base Delay (s)",
+            min_value=0.5, max_value=60.0, value=10.0, step=0.5, format="%.1f",
+            help="Base delay for exponential back-off on Bandcamp retries (doubles each attempt, plus jitter).",
+        )
 
 if main_tab in {"Qobuz Settings", "Streamrip Settings", "Smoked Salmon Settings"}:
     st.sidebar.header("Configuration")
@@ -974,9 +1034,17 @@ if main_tab == "Streamrip Settings":
             options=QUALITY_OPTIONS,
             index=QUALITY_OPTIONS.index(st.session_state.active_rip_quality),
             format_func=format_quality_option,
-            help="Runtime rip quality used by quick rip actions in tool tabs (equivalent to `--quality`).",
+            help="Runtime rip quality used by quick rip actions in tool tabs (equivalent to `--quality`). Also saved to streamrip config.",
             key="streamrip_runtime_rip_quality",
+            on_change=_on_rip_quality_change,
         )
+        _quality_save_result = st.session_state.pop("_quality_save_result", None)
+        if _quality_save_result is not None:
+            _ok, _msg = _quality_save_result
+            if _ok:
+                st.toast(_msg, icon="✅")
+            else:
+                st.warning(_msg)
     with runtime_col2:
         st.session_state.active_rip_codec = st.selectbox(
             "Rip Codec",
@@ -1069,6 +1137,7 @@ if main_tab == "Bandcamp Matcher":
         "min_duration": int(min_duration) if min_duration else None,
         "max_duration": int(max_duration) if max_duration else None,
         "free_mode": free_mode,
+        "only_24bit": only_24bit,
         "check_red": check_red if "check_red" in locals() else False,
         "check_ops": check_ops if "check_ops" in locals() else False,
     }
@@ -1110,6 +1179,14 @@ if main_tab == "Bandcamp Matcher":
         start_date=start_date,
         end_date=end_date,
         dry_run=dry_run,
+        rate_limit_config={
+            "concurrency": int(ui_concurrency),
+            "request_delay": float(ui_request_delay),
+            "qobuz_retries": int(ui_qobuz_retries),
+            "qobuz_retry_delay": float(ui_qobuz_retry_delay),
+            "bc_retries": int(ui_bc_retries),
+            "bc_retry_delay": float(ui_bc_retry_delay),
+        },
     )
 
     run_processing_tick()
