@@ -20,6 +20,7 @@ from app_modules.streamrip import (
     is_streamrip_installed,
     load_streamrip_settings,
     save_streamrip_settings,
+    update_streamrip_quality_only,
 )
 from app_modules.system_utils import open_in_default_app
 from app_modules.ui_processing import (
@@ -129,6 +130,19 @@ def _render_alert_scroll_if_requested() -> None:
         height=1,
     )
     st.session_state.auto_scroll_alerts_once = False
+
+
+def _on_rip_quality_change() -> None:
+    quality = st.session_state.get("streamrip_runtime_rip_quality")
+    if quality is None or quality not in QUALITY_OPTIONS:
+        return
+    st.session_state.active_rip_quality = quality
+    config_path = get_streamrip_config_path()
+    if config_path and os.path.exists(config_path):
+        ok, msg = update_streamrip_quality_only(config_path, quality)
+        if ok:
+            st.session_state.streamrip_form_quality = quality
+        st.session_state._quality_save_result = (ok, msg)
 
 
 init_session_state()
@@ -1020,9 +1034,17 @@ if main_tab == "Streamrip Settings":
             options=QUALITY_OPTIONS,
             index=QUALITY_OPTIONS.index(st.session_state.active_rip_quality),
             format_func=format_quality_option,
-            help="Runtime rip quality used by quick rip actions in tool tabs (equivalent to `--quality`).",
+            help="Runtime rip quality used by quick rip actions in tool tabs (equivalent to `--quality`). Also saved to streamrip config.",
             key="streamrip_runtime_rip_quality",
+            on_change=_on_rip_quality_change,
         )
+        _quality_save_result = st.session_state.pop("_quality_save_result", None)
+        if _quality_save_result is not None:
+            _ok, _msg = _quality_save_result
+            if _ok:
+                st.toast(_msg, icon="✅")
+            else:
+                st.warning(_msg)
     with runtime_col2:
         st.session_state.active_rip_codec = st.selectbox(
             "Rip Codec",

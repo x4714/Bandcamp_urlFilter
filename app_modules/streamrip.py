@@ -615,6 +615,22 @@ def save_streamrip_settings(
         return False, f"Could not save streamrip config: {e}"
 
 
+def update_streamrip_quality_only(config_path: str, quality: int) -> tuple[bool, str]:
+    _streamrip_debug(f"Updating streamrip quality to {quality} in `{config_path}`.")
+    try:
+        from streamrip.config import Config  # type: ignore
+
+        config = Config(config_path)
+        config.file.qobuz.quality = int(quality)
+        config.file.set_modified()
+        config.save_file()
+        _streamrip_debug(f"Streamrip quality updated to {quality}.")
+        return True, f"Quality saved: {format_quality_option(quality)}"
+    except Exception as e:
+        _streamrip_debug(f"Failed updating streamrip quality: {e}")
+        return False, f"Could not save quality to streamrip config: {e}"
+
+
 def read_streamrip_config_text(config_path: str, show_secrets: bool = False) -> str:
     _streamrip_debug(
         f"Reading raw streamrip config text from `{config_path}` (show_secrets={show_secrets})."
