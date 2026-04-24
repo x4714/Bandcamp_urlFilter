@@ -6,6 +6,7 @@ import re
 import time
 from rapidfuzz import fuzz
 from dotenv import load_dotenv
+from logic.proxy_utils import proxy_request_kwargs
 
 logger = logging.getLogger(__name__)
 load_dotenv()
@@ -18,9 +19,12 @@ async def _auto_discover_qobuz_app_id(session: aiohttp.ClientSession, proxy: str
     if _AUTO_DISCOVERED_APP_ID:
         return _AUTO_DISCOVERED_APP_ID
 
-    _proxy = proxy or None
     try:
-        async with session.get("https://play.qobuz.com/", timeout=REQUEST_TIMEOUT, proxy=_proxy) as response:
+        async with session.get(
+            "https://play.qobuz.com/",
+            timeout=REQUEST_TIMEOUT,
+            **proxy_request_kwargs(proxy),
+        ) as response:
             if response.status != 200:
                 return ""
             html = await response.text()
@@ -33,7 +37,7 @@ async def _auto_discover_qobuz_app_id(session: aiohttp.ClientSession, proxy: str
 
     bundle_url = f"https://play.qobuz.com{bundle_match.group(1)}"
     try:
-        async with session.get(bundle_url, timeout=REQUEST_TIMEOUT, proxy=_proxy) as response:
+        async with session.get(bundle_url, timeout=REQUEST_TIMEOUT, **proxy_request_kwargs(proxy)) as response:
             if response.status != 200:
                 return ""
             js = await response.text()
@@ -73,7 +77,6 @@ async def search_qobuz(
         logger.warning("QOBUZ_APP_ID is missing and auto-discovery failed.")
         return {}
 
-    _proxy = proxy or None
     params = {
         "query": query,
         "limit": 10,
@@ -86,7 +89,11 @@ async def search_qobuz(
     for attempt in range(max_retries):
         try:
             async with session.get(
-                url, params=params, headers=headers, timeout=REQUEST_TIMEOUT, proxy=_proxy
+                url,
+                params=params,
+                headers=headers,
+                timeout=REQUEST_TIMEOUT,
+                **proxy_request_kwargs(proxy),
             ) as response:
                 if response.status == 200:
                     data = await response.json()

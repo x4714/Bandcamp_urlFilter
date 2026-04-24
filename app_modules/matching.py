@@ -7,7 +7,7 @@ import aiohttp
 from app_modules.debug_logging import emit_debug
 from logic.gazelle_api import GazelleAPI
 from logic.metadata_scraper import HostRateLimiter, scrape_bandcamp_metadata
-from logic.proxy_utils import get_proxy
+from logic.proxy_utils import create_connector_for_proxy, get_proxy
 from logic.qobuz_matcher import match_album
 
 STATUS_ERROR_SCRAPING = "⚠️ Error scraping Bandcamp"
@@ -40,7 +40,8 @@ def _env_float(name: str, default: float) -> float:
 
 
 async def process_single_entry(
-    session: aiohttp.ClientSession,
+    bandcamp_session: aiohttp.ClientSession,
+    qobuz_session: aiohttp.ClientSession,
     entry,
     rate_limiter: HostRateLimiter,
     semaphore: asyncio.Semaphore,
@@ -56,7 +57,7 @@ async def process_single_entry(
     _matching_debug(f"Processing single entry: `{entry.url}`")
     async with semaphore:
         bc_data = await scrape_bandcamp_metadata(
-            entry.url, session, rate_limiter=rate_limiter,
+            entry.url, bandcamp_session, rate_limiter=rate_limiter,
             max_retries=bc_max_retries, base_delay=bc_base_delay,
             proxy=bandcamp_proxy,
         )
@@ -71,7 +72,7 @@ async def process_single_entry(
         }
 
     match_data = await match_album(
-        session, bc_data, only_24bit=only_24bit,
+        qobuz_session, bc_data, only_24bit=only_24bit,
         max_retries=qobuz_max_retries, base_delay=qobuz_base_delay,
         proxy=qobuz_proxy,
     )
@@ -157,18 +158,30 @@ async def process_batch(
     )
     semaphore = asyncio.Semaphore(concurrency)
     rate_limiter = HostRateLimiter(min_interval_seconds=min_interval_seconds)
-    connector = aiohttp.TCPConnector(limit=max(concurrency * 2, 4), limit_per_host=concurrency)
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
         )
     }
-    async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
+    bandcamp_connector = create_connector_for_proxy(
+        bandcamp_proxy,
+        limit=max(concurrency * 2, 4),
+        limit_per_host=concurrency,
+    )
+    qobuz_connector = create_connector_for_proxy(
+        qobuz_proxy,
+        limit=max(concurrency * 2, 4),
+        limit_per_host=concurrency,
+    )
+    async with (
+        aiohttp.ClientSession(connector=bandcamp_connector, headers=headers) as bandcamp_session,
+        aiohttp.ClientSession(connector=qobuz_connector, headers=headers) as qobuz_session,
+    ):
         try:
             tasks = [
                 asyncio.create_task(process_single_entry(
-                    session, entry, rate_limiter, semaphore,
+                    bandcamp_session, qobuz_session, entry, rate_limiter, semaphore,
                     trackers=trackers, only_24bit=only_24bit,
                     qobuz_max_retries=qobuz_max_retries, qobuz_base_delay=qobuz_base_delay,
                     bc_max_retries=bc_max_retries, bc_base_delay=bc_base_delay,

@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 import aiohttp
 import logging
+from logic.proxy_utils import proxy_request_kwargs
 
 logger = logging.getLogger(__name__)
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=20)
@@ -74,12 +75,11 @@ async def fetch_with_retries(
     proxy: Optional[str] = None,
 ) -> str:
     """Fetches text with exponential backoff on failure."""
-    _proxy = proxy or None
     for attempt in range(max_retries):
         try:
             if rate_limiter is not None:
                 await rate_limiter.wait(url)
-            async with session.get(url, timeout=REQUEST_TIMEOUT, proxy=_proxy) as response:
+            async with session.get(url, timeout=REQUEST_TIMEOUT, **proxy_request_kwargs(proxy)) as response:
                 if response.status == 200:
                     return await response.text()
                 elif response.status in (429, 500, 502, 503, 504):

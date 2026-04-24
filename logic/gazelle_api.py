@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
-from logic.proxy_utils import get_proxy
+from logic.proxy_utils import create_connector_for_proxy, get_proxy, proxy_request_kwargs
 
 
 class GazelleAPI:
@@ -72,13 +72,17 @@ class GazelleAPI:
         emit_debug("gazelle_api", f"[{self.site_name}] Request params: {params}")
 
         try:
-            async with aiohttp.ClientSession(headers=headers) as session:
+            proxy = get_proxy("tracker")
+            async with aiohttp.ClientSession(
+                headers=headers,
+                connector=create_connector_for_proxy(proxy),
+            ) as session:
                 async with session.get(
                     f"{self.site_url}/ajax.php",
                     params=params,
                     timeout=15,
                     allow_redirects=False,
-                    proxy=get_proxy("tracker"),
+                    **proxy_request_kwargs(proxy),
                 ) as response:
                     if response.status == 200:
                         try:
