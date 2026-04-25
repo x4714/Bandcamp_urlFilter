@@ -104,6 +104,11 @@ APP_AUTH_PASSWORD_HASH=
 APP_AUTH_SESSION_TTL_SECONDS=43200
 APP_AUTH_MAX_FAILURES=5
 APP_AUTH_LOCKOUT_SECONDS=900
+APP_AUTH_COOKIE_NAME=bandcamp_urlfilter_auth_session
+APP_AUTH_COOKIE_SECURE=1
+# Optional debug logging (disabled by default):
+APP_DEBUG_LOG_ENABLED=0
+APP_DEBUG_STDERR=0
 # Optional tracker/upload helpers:
 RED_API_KEY=
 RED_SESSION_COOKIE=
@@ -122,7 +127,7 @@ Notes:
 
 - `QOBUZ_USER_AUTH_TOKEN` is required for live Qobuz matching.
 - `QOBUZ_APP_ID` is optional. If it is missing, the app tries to discover it from the Qobuz web player.
-- `APP_AUTH_*` is optional, but strongly recommended if the app will be reachable on the public web.
+- `APP_AUTH_*` is optional, but strongly recommended if the app will be reachable on the public web. `APP_AUTH_COOKIE_NAME` lets you namespace the browser cookie when several apps share the same host.
 - Built-in app auth now expires authenticated sessions after 12 hours by default and locks sign-in after 5 failed attempts for 15 minutes.
 - tracker credentials are optional and only needed for duplicate checking / upload helper features
 - proxy vars are all optional and off by default. `GLOBAL_PROXY` is the fallback for every service; service-specific vars (`BANDCAMP_PROXY`, `QOBUZ_PROXY`, `TRACKER_PROXY`) override it for that service only. Supported schemes: `http://`, `https://`, `socks5://`.
@@ -294,6 +299,5 @@ uv tool install git+https://github.com/smokin-salmon/smoked-salmon
 ## Script Reference
 
 See [docs/scripts.md](docs/scripts.md) for a summary of every launcher and helper script in the repo.
-
 
 

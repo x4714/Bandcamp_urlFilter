@@ -1,17 +1,32 @@
+import logging
 import os
-import sys
+import re
 import threading
-from datetime import datetime, timezone
+import time
+from logging.handlers import RotatingFileHandler
 
-_DEBUG_LOCK = threading.Lock()
+
 _DEBUG_DIR = os.path.abspath(".debug")
 _DEBUG_LOG_PATH = os.path.join(_DEBUG_DIR, "app_debug.log")
-_DEBUG_LOG_PREFIX = "app_debug_"
-_DEBUG_LOG_SUFFIX = ".log"
 _DEBUG_LOG_MAX_BYTES_DEFAULT = 5 * 1024 * 1024
 _DEBUG_LOG_MAX_FILES_DEFAULT = 10
 _DEBUG_LOG_MIN_BYTES = 64 * 1024
+_DEBUG_LOGGER_NAME = "bandcamp_urlfilter.debug"
+_LOGGER_INIT_LOCK = threading.Lock()
 _LOGGER_INITIALIZED = False
+
+_SENSITIVE_PATTERNS = [
+    re.compile(r"(?i)\b(x-user-auth-token|authorization)\b([=:]\s*)([^\s,;]+)"),
+    re.compile(r"(?i)\b(qobuz_user_auth_token|app_auth_password_hash|red_api_key|ops_api_key)\b([=:]\s*)([^\s,;]+)"),
+    re.compile(r"(?i)\b(password_or_token|app_auth_token|cookie_value)\b([=:]\s*)([^\s,;]+)"),
+]
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = str(os.getenv(name, "")).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _get_debug_log_max_bytes() -> int:
@@ -36,88 +51,58 @@ def _get_debug_log_max_files() -> int:
         return _DEBUG_LOG_MAX_FILES_DEFAULT
 
 
-def _archive_name_from_now() -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")[:-3]
-    return os.path.join(_DEBUG_DIR, f"{_DEBUG_LOG_PREFIX}{stamp}_pid{os.getpid()}{_DEBUG_LOG_SUFFIX}")
+def _sanitize_debug_text(message: str) -> str:
+    sanitized = str(message or "")
+    for pattern in _SENSITIVE_PATTERNS:
+        sanitized = pattern.sub(lambda match: f"{match.group(1)}{match.group(2)}[redacted]", sanitized)
+    return sanitized
 
 
-def _list_archived_logs() -> list[str]:
-    files: list[str] = []
-    try:
-        for name in os.listdir(_DEBUG_DIR):
-            if not name.startswith(_DEBUG_LOG_PREFIX) or not name.endswith(_DEBUG_LOG_SUFFIX):
-                continue
-            files.append(os.path.join(_DEBUG_DIR, name))
-    except Exception:
-        return []
-    files.sort(key=lambda p: os.path.getmtime(p), reverse=True)
-    return files
-
-
-def _enforce_max_log_files(max_files: int) -> None:
-    # `max_files` includes the current app_debug.log.
-    max_archived = max(0, max_files - 1)
-    archived = _list_archived_logs()
-    for stale_path in archived[max_archived:]:
-        try:
-            os.remove(stale_path)
-        except Exception:
-            pass
-
-
-def _initialize_logger() -> None:
+def _configure_debug_logger() -> logging.Logger:
     global _LOGGER_INITIALIZED
+    logger = logging.getLogger(_DEBUG_LOGGER_NAME)
     if _LOGGER_INITIALIZED:
-        return
+        return logger
 
-    os.makedirs(_DEBUG_DIR, exist_ok=True)
-    if os.path.isfile(_DEBUG_LOG_PATH) and os.path.getsize(_DEBUG_LOG_PATH) > 0:
-        archive_path = _archive_name_from_now()
-        try:
-            os.replace(_DEBUG_LOG_PATH, archive_path)
-        except Exception:
-            pass
+    with _LOGGER_INIT_LOCK:
+        if _LOGGER_INITIALIZED:
+            return logger
 
-    with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-        started_at = datetime.now(timezone.utc).isoformat()
-        f.write(f"[debug log start] {started_at} pid={os.getpid()}\n")
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
+        formatter = logging.Formatter(
+            "[%(name)s %(levelname)s %(asctime)s UTC] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        formatter.converter = time.gmtime  # type: ignore[name-defined]
 
-    _enforce_max_log_files(_get_debug_log_max_files())
-    _LOGGER_INITIALIZED = True
+        if _env_flag("APP_DEBUG_STDERR", default=False):
+            stderr_handler = logging.StreamHandler()
+            stderr_handler.setLevel(logging.DEBUG)
+            stderr_handler.setFormatter(formatter)
+            logger.addHandler(stderr_handler)
 
+        if _env_flag("APP_DEBUG_LOG_ENABLED", default=False):
+            os.makedirs(_DEBUG_DIR, exist_ok=True)
+            file_handler = RotatingFileHandler(
+                _DEBUG_LOG_PATH,
+                maxBytes=_get_debug_log_max_bytes(),
+                backupCount=max(0, _get_debug_log_max_files() - 1),
+                encoding="utf-8",
+            )
+            file_handler.setLevel(logging.DEBUG)
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
 
-def _trim_debug_log_if_needed(log_path: str, max_bytes: int) -> None:
-    if max_bytes <= 0 or not os.path.isfile(log_path):
-        return
-    current_size = os.path.getsize(log_path)
-    if current_size <= max_bytes:
-        return
-
-    keep_bytes = max(max_bytes // 2, _DEBUG_LOG_MIN_BYTES)
-    with open(log_path, "rb") as src:
-        if current_size > keep_bytes:
-            src.seek(-keep_bytes, os.SEEK_END)
-        tail = src.read()
-
-    newline_pos = tail.find(b"\n")
-    if newline_pos != -1 and newline_pos + 1 < len(tail):
-        tail = tail[newline_pos + 1 :]
-
-    with open(log_path, "wb") as dst:
-        dst.write(b"[debug log rotated]\n")
-        dst.write(tail)
+        _LOGGER_INITIALIZED = True
+    return logger
 
 
 def emit_debug(channel: str, message: str) -> None:
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    rendered = f"[{channel} debug {timestamp} UTC] {message}"
-    print(rendered, file=sys.stderr, flush=True)
+    logger = _configure_debug_logger()
+    if not logger.handlers:
+        return
     try:
-        with _DEBUG_LOCK:
-            _initialize_logger()
-            _trim_debug_log_if_needed(_DEBUG_LOG_PATH, _get_debug_log_max_bytes())
-            with open(_DEBUG_LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(rendered + "\n")
+        logger.debug("[%s] %s", str(channel or "app").strip(), _sanitize_debug_text(message))
     except Exception:
-        # Debug logging must never break app execution.
         pass

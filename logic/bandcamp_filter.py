@@ -1,6 +1,5 @@
 import re
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any
 from datetime import datetime, date
 
 ANSI_ESCAPE_PATTERN = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
@@ -21,9 +20,9 @@ class LogEntry:
     title: str
     meta_raw: str
     genre: str = ""
-    track_count: Optional[int] = None
-    duration_min: Optional[int] = None
-    release_date: Optional[date] = None
+    track_count: int | None = None
+    duration_min: int | None = None
+    release_date: date | None = None
     free_flag: str = ""
     original_line: str = ""
 
@@ -33,7 +32,7 @@ def clean_ansi(text: str) -> str:
     text = re.sub(r'[\x02\x1D\x1F\x16\x0F]', '', text)
     return text
 
-def parse_duration(duration_str: str) -> Optional[int]:
+def parse_duration(duration_str: str) -> int | None:
     if not duration_str: return None
     total_minutes = 0
     duration_str = duration_str.lower().strip()
@@ -49,7 +48,7 @@ def parse_duration(duration_str: str) -> Optional[int]:
         
     return total_minutes if total_minutes > 0 else None
 
-def parse_line(line: str) -> Optional[LogEntry]:
+def parse_line(line: str) -> LogEntry | None:
     clean_line = clean_ansi(line).strip()
     if clean_line.startswith('***'): return None
 
@@ -98,7 +97,7 @@ def parse_line(line: str) -> Optional[LogEntry]:
         
     return entry
 
-def filter_entries(lines: List[str], filters: Dict[str, Any]) -> List[LogEntry]:
+def filter_entries(lines: list[str], filters: dict[str, object]) -> list[LogEntry]:
     """
     Applies filters to raw log lines and returns valid LogEntry objects.
     filters dict can optionally contain:

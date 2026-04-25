@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import streamlit as st
 
 from app_modules.debug_logging import emit_debug
-from app_modules.streamrip import export_qobuz_batches, extract_qobuz_urls, run_streamrip_batches
+from app_modules.streamrip import extract_qobuz_urls, run_streamrip_batches
 
 
 def _ui_tools_debug(message: str) -> None:
@@ -27,6 +27,50 @@ def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:
         return text[-max_chars:]
     except Exception:
         return ""
+
+
+def _build_direct_rip_batches(
+    pasted_text: str,
+    uploaded_qobuz_files,
+) -> tuple[list[str], list[tuple[str, list[str]]]]:
+    batch_map: dict[str, list[str]] = {}
+    pasted_urls = extract_qobuz_urls(pasted_text)
+    if pasted_urls:
+        batch_map["qobuz_batch_pasted.txt"] = pasted_urls
+
+    for fname, content in _read_text_upload(uploaded_qobuz_files):
+        file_urls = extract_qobuz_urls(content)
+        if not file_urls:
+            continue
+        batch_map.setdefault(fname, []).extend(file_urls)
+
+    direct_urls: list[str] = []
+    prepared_batches: list[tuple[str, list[str]]] = []
+    seen_urls: set[str] = set()
+    for fname, urls in batch_map.items():
+        unique_urls_in_batch: list[str] = []
+        for url in urls:
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            unique_urls_in_batch.append(url)
+            direct_urls.append(url)
+        if unique_urls_in_batch:
+            prepared_batches.append((fname, unique_urls_in_batch))
+    return direct_urls, prepared_batches
+
+
+def _write_direct_rip_batches(prepared_batches: list[tuple[str, list[str]]]) -> list[str]:
+    export_dir = os.path.abspath("exports")
+    os.makedirs(export_dir, exist_ok=True)
+
+    written_files: list[str] = []
+    for fname, urls in prepared_batches:
+        filepath = os.path.join(export_dir, fname)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write("\n".join(urls) + "\n")
+        written_files.append(fname)
+    return written_files
 
 
 def render_direct_qobuz_rip_tab(
@@ -84,50 +128,7 @@ def render_direct_qobuz_rip_tab(
         accept_multiple_files=True,
         disabled=locked,
     )
-    # Prepare batches: separate uploaded files and pasted text
-    batch_map = {} # filename -> list of urls
-    
-    # 1. Handle pasted text
-    pasted_urls = extract_qobuz_urls(pasted_text)
-    if pasted_urls:
-        batch_map["qobuz_batch_pasted.txt"] = pasted_urls
-        
-    # 2. Handle uploaded files
-    uploaded_data = _read_text_upload(uploaded_qobuz_files)
-    for fname, content in uploaded_data:
-        f_urls = extract_qobuz_urls(content)
-        if f_urls:
-            # If multiple files have the same name (unlikely in Streamlit but possible), 
-            # we merge them or suffix them. Here we just append.
-            if fname in batch_map:
-                batch_map[fname].extend(f_urls)
-            else:
-                batch_map[fname] = f_urls
-
-    # Deduplicate URLs across all batches to avoid redundant ripping
-    all_urls_dedup = []
-    seen_urls = set()
-    final_batch_files = []
-    
-    export_dir = os.path.abspath("exports")
-    os.makedirs(export_dir, exist_ok=True)
-
-    for fname, urls in batch_map.items():
-        unique_urls_in_batch = []
-        for u in urls:
-            if u not in seen_urls:
-                seen_urls.add(u)
-                unique_urls_in_batch.append(u)
-                all_urls_dedup.append(u)
-        
-        if unique_urls_in_batch:
-            # Save this batch to exports/
-            filepath = os.path.join(export_dir, fname)
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write("\n".join(unique_urls_in_batch) + "\n")
-            final_batch_files.append(fname)
-
-    direct_urls = all_urls_dedup
+    direct_urls, prepared_batches = _build_direct_rip_batches(pasted_text, uploaded_qobuz_files)
     _ui_tools_debug(f"Parsed {len(direct_urls)} direct Qobuz URL(s) from input.")
     st.caption(f"Detected {len(direct_urls)} unique Qobuz URL(s).")
     if direct_urls:
@@ -165,7 +166,7 @@ def render_direct_qobuz_rip_tab(
             _ui_tools_debug("Direct rip blocked because no URLs were detected.")
             st.warning("No Qobuz links detected. Paste links or upload a file first.")
         else:
-            # We already have our batch files prepared in exports/ and in final_batch_files
+            final_batch_files = _write_direct_rip_batches(prepared_batches)
             total_batches = len(final_batch_files)
             _ui_tools_debug(f"Starting direct rip run for {len(direct_urls)} URL(s).")
             st.info(f"Prepared {total_batches} batch file(s) in `/exports/`. Starting streamrip...")

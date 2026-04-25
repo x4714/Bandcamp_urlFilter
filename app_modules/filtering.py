@@ -1,6 +1,5 @@
 import sys
 from datetime import datetime, timezone
-from typing import List
 
 from app_modules.debug_logging import emit_debug
 from logic.bandcamp_filter import filter_entries
@@ -10,7 +9,7 @@ def _filtering_debug(message: str) -> None:
     emit_debug("filtering", message)
 
 
-def get_download_link(data_list: List[dict]) -> str:
+def get_download_link(data_list: list[dict]) -> str:
     _filtering_debug(f"Building download link text from {len(data_list)} row(s).")
     qobuz_urls = [d["qobuz_url"] for d in data_list if d.get("qobuz_url")]
     _filtering_debug(f"Extracted {len(qobuz_urls)} qobuz URL(s) for download text.")
@@ -24,7 +23,7 @@ def validate_filters(
     max_duration,
     start_date,
     end_date,
-) -> List[str]:
+) -> list[str]:
     _filtering_debug("Validating filter inputs.")
     errors = []
     if min_tracks is not None and max_tracks is not None and min_tracks > max_tracks:

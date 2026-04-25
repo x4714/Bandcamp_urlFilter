@@ -56,6 +56,12 @@ def _ui_state_debug(message: str) -> None:
     emit_debug("ui state", message)
 
 
+def _clone_session_value(value: object) -> object:
+    if isinstance(value, (str, int, float, bool, type(None))):
+        return value
+    return copy.deepcopy(value)
+
+
 @st.cache_resource(show_spinner=False)
 def _get_session_defaults_snapshot_store() -> dict[str, object]:
     # Process-level fallback to rehydrate key UI state when Streamlit recreates session_state.
@@ -64,7 +70,7 @@ def _get_session_defaults_snapshot_store() -> dict[str, object]:
 
 def remember_session_snapshot_value(key: str, value: object) -> None:
     snapshot_store = _get_session_defaults_snapshot_store()
-    snapshot_store[str(key)] = copy.deepcopy(value)
+    snapshot_store[str(key)] = _clone_session_value(value)
 
 
 def init_session_state() -> None:
@@ -74,20 +80,20 @@ def init_session_state() -> None:
     for key, default_value in SESSION_DEFAULTS.items():
         if key not in st.session_state:
             if key in snapshot_store:
-                st.session_state[key] = copy.deepcopy(snapshot_store[key])
+                st.session_state[key] = _clone_session_value(snapshot_store[key])
                 restored_count += 1
             else:
-                st.session_state[key] = copy.deepcopy(default_value)
+                st.session_state[key] = _clone_session_value(default_value)
             initialized_count += 1
     for key in SESSION_SNAPSHOT_ONLY_KEYS:
         if key not in st.session_state and key in snapshot_store:
-            st.session_state[key] = copy.deepcopy(snapshot_store[key])
+            st.session_state[key] = _clone_session_value(snapshot_store[key])
             restored_count += 1
     for key in SESSION_DEFAULTS:
-        snapshot_store[key] = copy.deepcopy(st.session_state.get(key))
+        snapshot_store[key] = _clone_session_value(st.session_state.get(key))
     for key in SESSION_SNAPSHOT_ONLY_KEYS:
         if key in st.session_state:
-            snapshot_store[key] = copy.deepcopy(st.session_state.get(key))
+            snapshot_store[key] = _clone_session_value(st.session_state.get(key))
     _ui_state_debug(
         "Session state init complete. "
         f"initialized={initialized_count}, restored_from_snapshot={restored_count}, "

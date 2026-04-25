@@ -22,6 +22,10 @@ from app_modules.streamrip import (
 from logic.proxy_utils import get_proxy
 
 
+_DIRECTORY_BROWSER_ROW_LIMIT = 220
+_DOUBLE_CLICK_THRESHOLD_SECONDS = 0.75
+
+
 def _setup_debug(message: str) -> None:
     emit_debug("streamrip setup", message)
 
@@ -260,7 +264,7 @@ def render_streamrip_setup(
                             st.session_state.streamrip_setup_focus_field = field_key
                             st.rerun()
 
-            col_setup1, col_setup2, col_setup3 = st.columns([1, 1, 1])
+            col_setup1, col_setup2, col_setup3 = st.columns(3)
             with col_setup1:
                 if st.button(
                     "Auto-Fill Token/App ID from .env",
@@ -894,7 +898,7 @@ def _render_download_folder_browser() -> None:
             selected_folder_abs = os.path.abspath(selected_folder_raw) if selected_folder_raw else ""
             selected_row_keys = [
                 f"streamrip_entry_row_{idx}"
-                for idx, entry in enumerate(entries[:220])
+                for idx, entry in enumerate(entries[:_DIRECTORY_BROWSER_ROW_LIMIT])
                 if selected_folder_abs and entry["is_dir"] and os.path.abspath(str(entry["path"])) == selected_folder_abs
             ]
             if selected_row_keys:
@@ -937,7 +941,7 @@ def _render_download_folder_browser() -> None:
                 unsafe_allow_html=True,
             )
 
-            for idx, entry in enumerate(entries[:220]):
+            for idx, entry in enumerate(entries[:_DIRECTORY_BROWSER_ROW_LIMIT]):
                 row_col1, row_col2, row_col3 = st.columns([6, 2, 1.5])
                 if entry["is_dir"]:
                     with row_col1:
@@ -951,7 +955,7 @@ def _render_download_folder_browser() -> None:
                             last_path = str(st.session_state.streamrip_last_click_path)
                             last_ts = float(st.session_state.streamrip_last_click_ts)
                             st.session_state.streamrip_folder_selection = clicked_path
-                            if last_path == clicked_path and (now_ts - last_ts) <= 0.75:
+                            if last_path == clicked_path and (now_ts - last_ts) <= _DOUBLE_CLICK_THRESHOLD_SECONDS:
                                 if navigate_to(clicked_path):
                                     st.session_state.streamrip_last_click_path = ""
                                     st.session_state.streamrip_last_click_ts = 0.0

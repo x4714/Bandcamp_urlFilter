@@ -143,9 +143,9 @@ def render_smoked_salmon_tab(
                 margin: 0.4rem 0 1rem 0;
                 padding: 0.9rem 1rem;
                 border-radius: 10px;
-                border: 1px solid rgba(255,255,255,0.18);
-                background: linear-gradient(135deg, rgba(0,0,0,0.72), rgba(20,20,20,0.78));
-                color: #f2f2f2;
+                border: 1px solid rgba(128,128,128,0.25);
+                background: linear-gradient(135deg, rgba(255,191,71,0.14), rgba(80,140,255,0.08));
+                color: inherit;
                 font-weight: 600;
                 font-size: 3rem;
                 text-align: center;

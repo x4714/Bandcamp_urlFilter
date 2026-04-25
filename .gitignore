@@ -47,5 +47,6 @@ run_rip.sh
 .codex
 exports/*.log
 .debug/
+.streamlit/*.sqlite3
 docker-data/
 .tmp

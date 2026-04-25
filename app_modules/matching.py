@@ -1,6 +1,6 @@
 import asyncio
 import os
-from typing import List, Optional
+from typing import Optional
 
 import aiohttp
 
@@ -45,7 +45,7 @@ async def process_single_entry(
     entry,
     rate_limiter: HostRateLimiter,
     semaphore: asyncio.Semaphore,
-    trackers: Optional[List[GazelleAPI]] = None,
+    trackers: list[GazelleAPI] | None = None,
     only_24bit: bool = False,
     qobuz_max_retries: int = 3,
     qobuz_base_delay: float = 10.0,
@@ -86,12 +86,12 @@ async def process_single_entry(
         if trackers:
             results = []
             for tracker in trackers:
-                is_dupe, info = await tracker.search_duplicates(artist, album, upc=upc)
+                _is_dupe, info = await tracker.search_duplicates(artist, album, upc=upc)
                 if info:
                     results.append(info)
 
             if results:
-                status += " | " + " | ".join(results)
+                status = " | ".join([STATUS_MATCHED] + results)
 
         return {
             "Artist": artist,
@@ -116,7 +116,7 @@ async def process_batch(
     entries,
     progress_callback=None,
     check_dupes: bool = False,
-    existing_trackers: Optional[List[GazelleAPI]] = None,
+    existing_trackers: list[GazelleAPI] | None = None,
     only_24bit: bool = False,
     concurrency: Optional[int] = None,
     min_interval_seconds: Optional[float] = None,
@@ -136,7 +136,7 @@ async def process_batch(
     bandcamp_proxy = get_proxy("bandcamp")
     qobuz_proxy = get_proxy("qobuz")
 
-    trackers = existing_trackers or []
+    trackers = list(existing_trackers or [])
     trackers_created_locally = False
 
     if check_dupes and not trackers:
@@ -178,6 +178,7 @@ async def process_batch(
         aiohttp.ClientSession(connector=bandcamp_connector, headers=headers) as bandcamp_session,
         aiohttp.ClientSession(connector=qobuz_connector, headers=headers) as qobuz_session,
     ):
+        tasks: list[asyncio.Task] = []
         try:
             tasks = [
                 asyncio.create_task(process_single_entry(
@@ -193,7 +194,15 @@ async def process_batch(
             total = len(tasks)
             done = 0
             for task in asyncio.as_completed(tasks):
-                row = await task
+                try:
+                    row = await task
+                except Exception:
+                    for pending_task in tasks:
+                        if not pending_task.done():
+                            pending_task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+                    raise
+
                 rows.append(row)
                 done += 1
                 if progress_callback:

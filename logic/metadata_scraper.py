@@ -164,10 +164,12 @@ async def scrape_bandcamp_metadata(
                     
                     return {
                         "artist": artist_name,
-                        "album": name, # It's a single track
+                        "album": "",
+                        "track": name,
                         "track_count": 1,
                         "year": date_published.split()[0][:4] if date_published else "",
                         "url": url,
+                        "is_single": True,
                         "status": "success"
                     }
                     

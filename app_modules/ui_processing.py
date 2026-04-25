@@ -7,7 +7,6 @@ from typing import Optional
 
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
 
 from app_modules.debug_logging import emit_debug
 from app_modules.filtering import build_filtered_entries, get_download_link
@@ -83,7 +82,6 @@ def handle_process_submission(
         _ui_processing_debug("Dry run mode enabled; stored filtered entries and rerunning UI.")
         st.rerun()
 
-    load_dotenv(override=True)
     if not os.getenv("QOBUZ_USER_AUTH_TOKEN"):
         _ui_processing_debug("Process blocked: QOBUZ_USER_AUTH_TOKEN missing in env.")
         st.session_state.auto_scroll_alerts_once = True

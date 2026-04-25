@@ -8,12 +8,12 @@ import sys
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Callable, List, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 import aiohttp
-from dotenv import load_dotenv
 from app_modules.debug_logging import emit_debug
+from logic.qobuz_app_id import discover_qobuz_app_id_sync
 from logic.proxy_utils import create_connector_for_proxy, get_proxy, proxy_request_kwargs
 
 QUALITY_OPTIONS = [0, 1, 2, 3, 4]
@@ -26,12 +26,6 @@ QUALITY_LABELS = {
 }
 CODEC_OPTIONS = ["Original", "MP3", "FLAC", "ALAC", "OPUS", "VORBIS", "AAC"]
 QOBUZ_URL_REGEX = re.compile(r"https?://(?:www\.|play\.)?qobuz\.com/[^\s\"'<>]+", re.IGNORECASE)
-_AUTO_DISCOVERED_APP_ID: str = ""
-_AUTO_DISCOVER_CONDITION = threading.Condition()
-_AUTO_DISCOVER_IN_FLIGHT = False
-_AUTO_DISCOVER_WAITERS = 0
-_AUTO_DISCOVER_LAST_STATUS = ""
-_AUTO_DISCOVER_STATUS_SEQ = 0
 
 
 def _streamrip_debug(message: str) -> None:
@@ -77,8 +71,8 @@ async def _qobuz_request_bytes_async(
     method: str,
     url: str,
     *,
-    headers: Optional[dict[str, str]] = None,
-    data: Optional[bytes] = None,
+    headers: dict[str, str] | None = None,
+    data: bytes | None = None,
     timeout_seconds: float = 15,
 ) -> tuple[int, dict[str, str], bytes]:
     proxy = get_proxy("qobuz")
@@ -115,8 +109,8 @@ def _qobuz_request_bytes(
     method: str,
     url: str,
     *,
-    headers: Optional[dict[str, str]] = None,
-    data: Optional[bytes] = None,
+    headers: dict[str, str] | None = None,
+    data: bytes | None = None,
     timeout_seconds: float = 15,
 ) -> tuple[int, dict[str, str], bytes]:
     return _run_coroutine_sync(
@@ -128,19 +122,6 @@ def _qobuz_request_bytes(
             timeout_seconds=timeout_seconds,
         )
     )
-
-
-def _publish_discovery_status(message: str, local_callback: Optional[Callable[[str], None]] = None) -> None:
-    global _AUTO_DISCOVER_LAST_STATUS, _AUTO_DISCOVER_STATUS_SEQ
-    with _AUTO_DISCOVER_CONDITION:
-        _AUTO_DISCOVER_LAST_STATUS = message
-        _AUTO_DISCOVER_STATUS_SEQ += 1
-        _AUTO_DISCOVER_CONDITION.notify_all()
-    if local_callback:
-        try:
-            local_callback(message)
-        except Exception:
-            pass
 
 
 def get_default_downloads_folder() -> str:
@@ -178,12 +159,12 @@ def normalize_codec_selection(codec_selection: str) -> str:
     return normalized
 
 
-def extract_qobuz_urls(raw_text: str) -> List[str]:
+def extract_qobuz_urls(raw_text: str) -> list[str]:
     if not raw_text:
         return []
 
     seen = set()
-    urls: List[str] = []
+    urls: list[str] = []
     for match in QOBUZ_URL_REGEX.findall(raw_text):
         cleaned = match.rstrip("),.;]}>\"'")
         if cleaned not in seen:
@@ -195,8 +176,7 @@ def extract_qobuz_urls(raw_text: str) -> List[str]:
 def get_env_qobuz_values(status_callback=None, fallback_app_id: str = "") -> tuple[str, str]:
     _streamrip_debug("get_env_qobuz_values() called.")
     if status_callback:
-        status_callback("Loading variables from .env...")
-    load_dotenv(override=True)
+        status_callback("Reading Qobuz values from the environment...")
 
     if status_callback:
         status_callback("Reading QOBUZ_APP_ID and QOBUZ_USER_AUTH_TOKEN...")
@@ -293,154 +273,18 @@ def upsert_env_values(env_path: str = ".env", updates: dict[str, str] | None = N
 
 
 def discover_qobuz_app_id(status_callback=None) -> str:
-    global _AUTO_DISCOVERED_APP_ID, _AUTO_DISCOVER_IN_FLIGHT, _AUTO_DISCOVER_WAITERS
     discover_started_at = time.monotonic()
-    with _AUTO_DISCOVER_CONDITION:
-        if _AUTO_DISCOVERED_APP_ID:
-            _bundle_debug("Returning cached auto-discovered Qobuz App ID.")
-            if status_callback:
-                status_callback("Using cached auto-discovered Qobuz App ID.")
-            return _AUTO_DISCOVERED_APP_ID
-
-        if _AUTO_DISCOVER_IN_FLIGHT:
-            _AUTO_DISCOVER_WAITERS += 1
-            waiter_position = _AUTO_DISCOVER_WAITERS
-            if waiter_position == 1 or waiter_position % 5 == 0:
-                _bundle_debug(f"Discovery already in progress; waiters={_AUTO_DISCOVER_WAITERS}.")
-            if status_callback:
-                status_callback("Waiting for shared Qobuz App ID discovery...")
-            last_seen_status_seq = _AUTO_DISCOVER_STATUS_SEQ
-            while _AUTO_DISCOVER_IN_FLIGHT:
-                _AUTO_DISCOVER_CONDITION.wait(timeout=0.25)
-                if status_callback and _AUTO_DISCOVER_STATUS_SEQ != last_seen_status_seq:
-                    message = _AUTO_DISCOVER_LAST_STATUS
-                    last_seen_status_seq = _AUTO_DISCOVER_STATUS_SEQ
-                    # Call each waiting thread's callback from its own thread context.
-                    _AUTO_DISCOVER_CONDITION.release()
-                    try:
-                        if message:
-                            status_callback(message)
-                    finally:
-                        _AUTO_DISCOVER_CONDITION.acquire()
-            _AUTO_DISCOVER_WAITERS = max(0, _AUTO_DISCOVER_WAITERS - 1)
-            if _AUTO_DISCOVERED_APP_ID:
-                if status_callback:
-                    status_callback("Using shared auto-discovered Qobuz App ID.")
-                return _AUTO_DISCOVERED_APP_ID
-
-        _AUTO_DISCOVER_IN_FLIGHT = True
-        _bundle_debug("discover_qobuz_app_id() started (leader thread).")
-
-    try:
-        try:
-            page_started_at = time.monotonic()
-            _publish_discovery_status("Fetching Qobuz web player page...", local_callback=status_callback)
-            _bundle_debug("Requesting https://play.qobuz.com/ ...")
-            status, _, body = _qobuz_request_bytes(
-                "GET",
-                "https://play.qobuz.com/",
-                headers={
-                    "user-agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
-                    )
-                },
-                timeout_seconds=12,
-            )
-            if status != 200:
-                _bundle_debug(f"Web player page request failed with HTTP {status}.")
-                return ""
-            _bundle_debug(
-                f"Web player page fetched with HTTP {status} in {time.monotonic() - page_started_at:.3f}s."
-            )
-            html = body.decode("utf-8", errors="replace")
-        except Exception as e:
-            _bundle_debug(f"Exception while fetching Qobuz web player page: {e}")
-            return ""
-
-        _publish_discovery_status("Extracting bundle.js URL from player page...", local_callback=status_callback)
-        bundle_match = re.search(r'src="(/resources/[^"]*bundle\.js)"', html)
-        if not bundle_match:
-            _bundle_debug("Could not find bundle.js URL in player HTML.")
-            return ""
-
-        bundle_url = f"https://play.qobuz.com{bundle_match.group(1)}"
-        _bundle_debug(f"Discovered bundle.js URL: {bundle_url}")
-        try:
-            request_started_at = time.monotonic()
-            _publish_discovery_status("Preparing bundle.js request...", local_callback=status_callback)
-            status, response_headers, raw_js = _qobuz_request_bytes(
-                "GET",
-                bundle_url,
-                headers={
-                    "user-agent": (
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36"
-                    )
-                },
-                timeout_seconds=12,
-            )
-            _publish_discovery_status("Opening connection to Qobuz bundle.js...", local_callback=status_callback)
-            _bundle_debug("Opening bundle.js connection...")
-            if status != 200:
-                _bundle_debug(f"bundle.js request failed with HTTP {status}.")
-                return ""
-            _bundle_debug(
-                f"bundle.js response opened with HTTP {status} in {time.monotonic() - request_started_at:.3f}s."
-            )
-            _publish_discovery_status("Reading Qobuz bundle.js response headers...", local_callback=status_callback)
-            content_length_header = response_headers.get("Content-Length", "").strip()
-            expected_bytes = int(content_length_header) if content_length_header.isdigit() else 0
-            _bundle_debug(
-                f"bundle.js headers read. Content-Length={expected_bytes if expected_bytes > 0 else 'unknown'}."
-            )
-            downloaded_bytes = len(raw_js)
-            _publish_discovery_status("Decoding Qobuz bundle.js content...", local_callback=status_callback)
-            decode_started_at = time.monotonic()
-            js = raw_js.decode("utf-8", errors="replace")
-            _bundle_debug(
-                f"bundle.js decoded in {time.monotonic() - decode_started_at:.3f}s "
-                f"(downloaded={downloaded_bytes:,} bytes, decoded length={len(js):,} chars)."
-            )
-            if expected_bytes > 0:
-                _publish_discovery_status(
-                    f"Bundle.js download complete ({downloaded_bytes:,}/{expected_bytes:,} bytes).",
-                    local_callback=status_callback,
-                )
-            else:
-                _publish_discovery_status(
-                    f"Bundle.js download complete ({downloaded_bytes:,} bytes).",
-                    local_callback=status_callback,
-                )
-        except Exception as e:
-            _bundle_debug(f"Exception while downloading/decoding bundle.js: {e}")
-            return ""
-
-        _publish_discovery_status("Parsing App ID from bundle.js...", local_callback=status_callback)
-        parse_started_at = time.monotonic()
-        production_match = re.search(
-            r'"?production"?\s*:\s*\{.*?"?api"?\s*:\s*\{.*?"?appId"?\s*:\s*"(\d+)"',
-            js,
-            re.DOTALL,
-        )
-        if not production_match:
-            _bundle_debug("Could not parse Qobuz App ID from bundle.js.")
-            return ""
-        _bundle_debug(f"Parsed Qobuz App ID in {time.monotonic() - parse_started_at:.3f}s.")
-
-        _AUTO_DISCOVERED_APP_ID = production_match.group(1)
-        _publish_discovery_status("Qobuz App ID discovered from web player.", local_callback=status_callback)
-        _bundle_debug(
-            f"Qobuz App ID discovered successfully in {time.monotonic() - discover_started_at:.3f}s total."
-        )
-        return _AUTO_DISCOVERED_APP_ID
-    finally:
-        with _AUTO_DISCOVER_CONDITION:
-            _AUTO_DISCOVER_IN_FLIGHT = False
-            waiter_count = _AUTO_DISCOVER_WAITERS
-            if waiter_count:
-                _bundle_debug(f"Discovery complete; notifying {waiter_count} waiting thread(s).")
-            _AUTO_DISCOVER_CONDITION.notify_all()
+    proxy = get_proxy("qobuz")
+    proxy_summary = _proxy_debug_summary(proxy)
+    _bundle_debug(f"Starting shared Qobuz App ID discovery (proxy={proxy_summary}).")
+    app_id = discover_qobuz_app_id_sync(status_callback=status_callback, proxy=proxy)
+    if not app_id:
+        _bundle_debug("Qobuz App ID discovery returned no value.")
+        return ""
+    _bundle_debug(
+        f"Qobuz App ID discovered successfully in {time.monotonic() - discover_started_at:.3f}s total."
+    )
+    return app_id
 
 
 def get_streamrip_config_path() -> str:
@@ -506,6 +350,25 @@ def ensure_streamrip_config_file(config_path: str) -> tuple[bool, str]:
         return False, f"Could not initialize streamrip config: {e}"
 
 
+def _iter_streamrip_database_configs(config: Any) -> list[Any]:
+    db_targets: list[Any] = []
+    seen_targets: set[int] = set()
+    file_data = getattr(config, "file", None)
+    for candidate in (
+        getattr(file_data, "database", None),
+        getattr(getattr(file_data, "session", None), "database", None),
+        getattr(getattr(config, "session", None), "database", None),
+    ):
+        if candidate is None:
+            continue
+        candidate_id = id(candidate)
+        if candidate_id in seen_targets:
+            continue
+        seen_targets.add(candidate_id)
+        db_targets.append(candidate)
+    return db_targets
+
+
 def load_streamrip_settings(config_path: str) -> tuple[dict, str]:
     _streamrip_debug(f"Loading streamrip settings from `{config_path}`.")
     if not os.path.exists(config_path):
@@ -525,17 +388,7 @@ def load_streamrip_settings(config_path: str) -> tuple[dict, str]:
             codec_selection = "Original"
         downloads_db_path = default_db_path
         failed_downloads_path = default_failed_path
-        db_cfg = None
-        if hasattr(config.file, "database"):
-            db_cfg = config.file.database
-        else:
-            file_session: Any = getattr(config.file, "session", None)
-            if file_session is not None and hasattr(file_session, "database"):
-                db_cfg = file_session.database
-            else:
-                config_session: Any = getattr(config, "session", None)
-                if config_session is not None and hasattr(config_session, "database"):
-                    db_cfg = config_session.database
+        db_cfg = next(iter(_iter_streamrip_database_configs(config)), None)
 
         if db_cfg:
             configured_db_path = str(getattr(db_cfg, "downloads_path", "") or "").strip()
@@ -632,15 +485,7 @@ def save_streamrip_settings(
             file_data.downloads.folder = downloads_folder.strip()
         if hasattr(file_data, "downloads") and hasattr(file_data.downloads, "failed_downloads_path"):
             setattr(file_data.downloads, "failed_downloads_path", selected_failed_downloads_path)
-        db_targets = []
-        if hasattr(file_data, "database"):
-            db_targets.append(file_data.database)
-        file_session: Any = getattr(file_data, "session", None)
-        if file_session is not None and hasattr(file_session, "database"):
-            db_targets.append(file_session.database)
-        config_session: Any = getattr(config, "session", None)
-        if config_session is not None and hasattr(config_session, "database"):
-            db_targets.append(config_session.database)
+        db_targets = _iter_streamrip_database_configs(config)
 
         # Ensure we set at least one database target
         for db_target in db_targets:
@@ -717,7 +562,7 @@ def _extract_first_present_value(payload: Any, keys: tuple[str, ...]) -> Any:
     return None
 
 
-def _parse_qobuz_datetime(value: Any) -> Optional[datetime]:
+def _parse_qobuz_datetime(value: Any) -> datetime | None:
     if value in (None, "", 0):
         return None
     if isinstance(value, (int, float)):
@@ -851,7 +696,7 @@ def fetch_qobuz_account_info(app_id: str, user_token: str) -> tuple[bool, dict, 
 
     expiry_dt = _parse_qobuz_datetime(expiry_value)
     renewal_dt = _parse_qobuz_datetime(renewal_value)
-    days_until_expiry: Optional[int] = None
+    days_until_expiry: int | None = None
     if expiry_dt is not None:
         seconds_left = (expiry_dt - datetime.now(timezone.utc)).total_seconds()
         days_until_expiry = int(seconds_left // 86400)
@@ -898,7 +743,7 @@ def fetch_qobuz_user_identifier(app_id: str, user_token: str) -> tuple[bool, dic
     }, "Fetched Qobuz user identifier."
 
 
-def resolve_streamrip_command() -> List[str]:
+def resolve_streamrip_command() -> list[str]:
     _streamrip_debug("Resolving streamrip command.")
     rip_bin = shutil.which("rip")
     if rip_bin:
@@ -919,12 +764,12 @@ def resolve_streamrip_command() -> List[str]:
 
 
 def run_streamrip_batches(
-    batch_files: List[str],
+    batch_files: list[str],
     rip_quality: int,
     codec_selection: str,
-    progress_callback: Optional[Callable[[str, str], None]] = None,
-    status_callback: Optional[Callable[[int, int, str], None]] = None,
-) -> tuple[int, int, List[dict], List[dict], List[dict], str]:
+    progress_callback: Any = None,
+    status_callback: Any = None,
+) -> tuple[int, int, list[dict], list[dict], list[dict], str]:
     _streamrip_debug(
         f"run_streamrip_batches() called with {len(batch_files)} batch file(s), "
         f"quality={rip_quality}, codec={codec_selection}."
@@ -967,10 +812,10 @@ def run_streamrip_batches(
 
     success_count = 0
     total_urls = 0
-    failures: List[dict] = []
-    skipped: List[dict] = []
-    successes: List[dict] = []
-    batch_urls: List[tuple[str, List[str]]] = []
+    failures: list[dict] = []
+    skipped: list[dict] = []
+    successes: list[dict] = []
+    batch_urls: list[tuple[str, list[str]]] = []
     for fname in batch_files:
         rel_path = os.path.join("exports", fname)
         _streamrip_debug(f"Loading batch file `{rel_path}`.")
@@ -1137,7 +982,7 @@ def _read_log_tail(log_path: str, max_chars: int = 6000) -> str:
         return ""
 
 
-def list_export_batch_files() -> List[str]:
+def list_export_batch_files() -> list[str]:
     export_dir = os.path.abspath("exports")
     _streamrip_debug(f"Listing export batch files in `{export_dir}`.")
     if not os.path.isdir(export_dir):
@@ -1152,7 +997,7 @@ def list_export_batch_files() -> List[str]:
     return files
 
 
-def export_qobuz_batches(valid_urls: List[str], max_links: int, rip_quality: int, rip_codec: str) -> tuple[List[str], int]:
+def export_qobuz_batches(valid_urls: list[str], max_links: int, rip_quality: int, rip_codec: str) -> tuple[list[str], int]:
     _streamrip_debug(
         f"export_qobuz_batches() called with {len(valid_urls)} URL(s), max_links={max_links}, "
         f"quality={rip_quality}, codec={rip_codec}."

@@ -1,66 +1,33 @@
-import os
 import asyncio
-import aiohttp
 import logging
-import re
+import os
 import time
+
+import aiohttp
 from rapidfuzz import fuzz
-from dotenv import load_dotenv
+
+from logic.qobuz_app_id import discover_qobuz_app_id_async, get_cached_qobuz_app_id
 from logic.proxy_utils import proxy_request_kwargs
 
 logger = logging.getLogger(__name__)
-load_dotenv()
-_AUTO_DISCOVERED_APP_ID: str = ""
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=10)
+QOBUZ_FUZZY_MATCH_THRESHOLD = 80
+QOBUZ_HIRES_MINIMUM_BIT_DEPTH = 24
+QOBUZ_SEARCH_LIMIT = 10
 
 
 async def _auto_discover_qobuz_app_id(session: aiohttp.ClientSession, proxy: str | None = None) -> str:
-    global _AUTO_DISCOVERED_APP_ID
-    if _AUTO_DISCOVERED_APP_ID:
-        return _AUTO_DISCOVERED_APP_ID
+    cached_app_id = get_cached_qobuz_app_id()
+    if cached_app_id:
+        return cached_app_id
+    return await discover_qobuz_app_id_async(session, proxy=proxy)
 
-    try:
-        async with session.get(
-            "https://play.qobuz.com/",
-            timeout=REQUEST_TIMEOUT,
-            **proxy_request_kwargs(proxy),
-        ) as response:
-            if response.status != 200:
-                return ""
-            html = await response.text()
-    except Exception:
-        return ""
-
-    bundle_match = re.search(r'src="(/resources/[^"]*bundle\.js)"', html)
-    if not bundle_match:
-        return ""
-
-    bundle_url = f"https://play.qobuz.com{bundle_match.group(1)}"
-    try:
-        async with session.get(bundle_url, timeout=REQUEST_TIMEOUT, **proxy_request_kwargs(proxy)) as response:
-            if response.status != 200:
-                return ""
-            js = await response.text()
-    except Exception:
-        return ""
-
-    production_match = re.search(
-        r'"?production"?\s*:\s*\{.*?"?api"?\s*:\s*\{.*?"?appId"?\s*:\s*"(\d+)"',
-        js,
-        re.DOTALL
-    )
-    if not production_match:
-        return ""
-
-    _AUTO_DISCOVERED_APP_ID = production_match.group(1)
-    return _AUTO_DISCOVERED_APP_ID
 
 def get_qobuz_credentials() -> tuple[str, str]:
-    # Reload values so .env edits are picked up without restarting Streamlit.
-    load_dotenv(override=True)
     app_id = os.getenv("QOBUZ_APP_ID", "")
     user_token = os.getenv("QOBUZ_USER_AUTH_TOKEN", "")
     return app_id, user_token
+
 
 async def search_qobuz(
     session: aiohttp.ClientSession,
@@ -79,8 +46,8 @@ async def search_qobuz(
 
     params = {
         "query": query,
-        "limit": 10,
-        "offset": 0
+        "limit": QOBUZ_SEARCH_LIMIT,
+        "offset": 0,
     }
     headers = {"X-App-Id": qobuz_app_id}
     if qobuz_user_auth_token:
@@ -96,27 +63,41 @@ async def search_qobuz(
                 **proxy_request_kwargs(proxy),
             ) as response:
                 if response.status == 200:
-                    data = await response.json()
+                    content_type = response.headers.get("Content-Type", "")
+                    data = await response.json(content_type=None)
+                    albums_payload = data.get("albums") if isinstance(data, dict) else None
+                    if not isinstance(albums_payload, dict):
+                        logger.warning(
+                            "Qobuz search returned HTTP 200 with unexpected payload for query %r "
+                            "(content_type=%r, payload_type=%s).",
+                            query,
+                            content_type,
+                            type(data).__name__,
+                        )
+                        return {}
                     return data
 
                 if response.status in (429, 500, 502, 503, 504):
                     delay = base_delay * (2 ** attempt)
                     logger.warning(
-                        f"Qobuz transient HTTP {response.status} for query '{query}'. Retrying in {delay}s..."
+                        "Qobuz transient HTTP %s for query %r. Retrying in %ss...",
+                        response.status,
+                        query,
+                        delay,
                     )
                     if attempt < max_retries - 1:
                         await asyncio.sleep(delay)
                     continue
 
-                logger.warning(f"Qobuz API returned {response.status} for query: {query}")
+                logger.warning("Qobuz API returned %s for query: %s", response.status, query)
                 return {}
         except asyncio.TimeoutError:
             delay = base_delay * (2 ** attempt)
-            logger.warning(f"Qobuz timeout for query '{query}'. Retrying in {delay}s...")
+            logger.warning("Qobuz timeout for query %r. Retrying in %ss...", query, delay)
             if attempt < max_retries - 1:
                 await asyncio.sleep(delay)
-        except Exception as e:
-            logger.error(f"Error fetching from Qobuz: {e}")
+        except Exception as exc:
+            logger.exception("Unexpected error fetching Qobuz search results for query %r: %s", query, exc)
             return {}
 
     return {}
@@ -127,77 +108,123 @@ def is_match(bandcamp_data: dict, qobuz_album: dict, only_24bit: bool = False) -
         return False
 
     album_title = qobuz_album.get("title", "Unknown")
+    current_timestamp = time.time()
 
     # 1. Base Streamable Check
     if not qobuz_album.get("streamable", False):
-        logger.debug(f"Skipped '{album_title}': Not streamable flag is False.")
+        logger.debug("Skipped %r: Not streamable flag is False.", album_title)
         return False
 
     # 2. 24-bit availability check (opt-in)
     if only_24bit:
         hires_streamable = qobuz_album.get("hires_streamable", False)
         max_bit_depth = qobuz_album.get("maximum_bit_depth", 0) or 0
-        if not hires_streamable and max_bit_depth < 24:
-            logger.debug(f"Skipped '{album_title}': Not available in 24-bit (hires_streamable={hires_streamable}, max_bit_depth={max_bit_depth}).")
+        if not hires_streamable and max_bit_depth < QOBUZ_HIRES_MINIMUM_BIT_DEPTH:
+            logger.debug(
+                "Skipped %r: Not available in 24-bit (hires_streamable=%s, max_bit_depth=%s).",
+                album_title,
+                hires_streamable,
+                max_bit_depth,
+            )
             return False
-        
+
     # 3. Release Date Check (Exclude Pre-orders)
     # released_at is a Unix timestamp. If in the future, it's a pre-order.
     released_at = qobuz_album.get("released_at")
-    if released_at and released_at > time.time():
-        release_date_str = time.strftime('%Y-%m-%d', time.gmtime(released_at))
-        logger.debug(f"Skipped '{album_title}': Pre-order (Released at {release_date_str}).")
+    if released_at and released_at > current_timestamp:
+        release_date_str = time.strftime("%Y-%m-%d", time.gmtime(released_at))
+        logger.debug("Skipped %r: Pre-order (Released at %s).", album_title, release_date_str)
         return False
 
     # 4. Completeness Check (Exclude Partially Streamable Albums)
     # Compare streamable_count with tracks_count if available.
     tracks_count = qobuz_album.get("tracks_count", 0)
     streamable_count = qobuz_album.get("streamable_count")
-    
-    # Fallback: if 'tracks' exists as a list (some API versions), check its length
-    if streamable_count is None and "tracks" in qobuz_album and isinstance(qobuz_album["tracks"], dict):
-        # Sometimes 'tracks' is a dict with 'items'
-        streamable_count = qobuz_album["tracks"].get("count")
+
+    tracks_payload = qobuz_album.get("tracks")
+    if streamable_count is None and isinstance(tracks_payload, dict):
+        items = tracks_payload.get("items")
+        if isinstance(items, list):
+            streamable_count = len(items)
+        else:
+            streamable_count = tracks_payload.get("count")
+    elif streamable_count is None and isinstance(tracks_payload, list):
+        streamable_count = len(tracks_payload)
 
     if streamable_count is not None and tracks_count > 0:
         if streamable_count < tracks_count:
-            logger.debug(f"Skipped '{album_title}': Partial streaming ({streamable_count}/{tracks_count} tracks).")
+            logger.debug(
+                "Skipped %r: Partial streaming (%s/%s tracks).",
+                album_title,
+                streamable_count,
+                tracks_count,
+            )
             return False
 
     qb_artist = qobuz_album.get("artist", {}).get("name", "")
-    qb_album = qobuz_album.get("title", "")
+    qb_album = album_title
     qb_tracks = qobuz_album.get("tracks_count", 0)
-    
+
     bc_artist = bandcamp_data.get("artist", "")
-    bc_album = bandcamp_data.get("album", "")
+    bc_album = bandcamp_data.get("album", "") or bandcamp_data.get("track", "")
     bc_tracks = bandcamp_data.get("track_count", 0)
-    
+
     # 5. Track Count Comparison
     # Requirement: EXACT MATCH
     if qb_tracks != bc_tracks and bc_tracks > 0:
-        logger.debug(f"Skipped '{album_title}': Track count mismatch (Qobuz: {qb_tracks}, Bandcamp: {bc_tracks}).")
+        logger.debug(
+            "Skipped %r: Track count mismatch (Qobuz: %s, Bandcamp: %s).",
+            album_title,
+            qb_tracks,
+            bc_tracks,
+        )
         return False
 
     # 6. Fuzzy Title & Artist Matching
     artist_score = fuzz.token_sort_ratio(qb_artist.lower(), bc_artist.lower())
     album_score = fuzz.token_sort_ratio(qb_album.lower(), bc_album.lower())
-    
-    if artist_score > 80 and album_score > 80:
+
+    if artist_score > QOBUZ_FUZZY_MATCH_THRESHOLD and album_score > QOBUZ_FUZZY_MATCH_THRESHOLD:
         return True
-        
-    logger.debug(f"Skipped '{album_title}': Fuzzy score too low (Artist: {artist_score}, Album: {album_score}).")
+
+    logger.debug(
+        "Skipped %r: Fuzzy score too low (Artist: %s, Album: %s).",
+        album_title,
+        artist_score,
+        album_score,
+    )
     return False
 
-async def match_album(session: aiohttp.ClientSession, bandcamp_data: dict, only_24bit: bool = False, max_retries: int = 3, base_delay: float = 1.5, proxy: str | None = None) -> dict:
+
+async def match_album(
+    session: aiohttp.ClientSession,
+    bandcamp_data: dict,
+    only_24bit: bool = False,
+    max_retries: int = 3,
+    base_delay: float = 1.5,
+    proxy: str | None = None,
+) -> dict:
     """Takes Bandcamp metadata, queries Qobuz, and returns match dict."""
     if bandcamp_data.get("status") != "success":
         return {"status": "no_bandcamp_metadata", "url": bandcamp_data.get("url")}
+    if bandcamp_data.get("is_single"):
+        return {
+            "status": "no_match",
+            "bandcamp_url": bandcamp_data.get("url"),
+            "qobuz_url": "",
+        }
 
     artist = bandcamp_data.get("artist", "")
     album = bandcamp_data.get("album", "")
 
     query = f"{artist} {album}"
-    search_results = await search_qobuz(session, query, max_retries=max_retries, base_delay=base_delay, proxy=proxy)
+    search_results = await search_qobuz(
+        session,
+        query,
+        max_retries=max_retries,
+        base_delay=base_delay,
+        proxy=proxy,
+    )
 
     albums = search_results.get("albums", {}).get("items", [])
 
@@ -213,11 +240,11 @@ async def match_album(session: aiohttp.ClientSession, bandcamp_data: dict, only_
                 "qobuz_album": qb_album.get("title"),
                 "qobuz_id": qb_album.get("id"),
                 "upc": qb_album.get("upc") or qb_album.get("barcode"),
-                "bandcamp_url": bandcamp_data.get("url")
+                "bandcamp_url": bandcamp_data.get("url"),
             }
-            
+
     return {
         "status": "no_match",
         "bandcamp_url": bandcamp_data.get("url"),
-        "qobuz_url": ""
+        "qobuz_url": "",
     }

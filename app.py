@@ -1,4 +1,5 @@
 import os
+import shutil
 import time
 from datetime import datetime, timezone
 
@@ -52,6 +53,8 @@ render_auth_gate()
 st.title("🎵 Bandcamp to Qobuz Matcher")
 st.markdown("Filter your Bandcamp URLs and find exact high-resolution matches on Qobuz.")
 render_modal_base_styles()
+ENV_FILE_PATH = ".env"
+ENV_TEMPLATE_PATH = ".env.example"
 
 
 def _app_debug(message: str) -> None:
@@ -65,9 +68,9 @@ def render_wip_notice() -> None:
             margin: 0.4rem 0 1rem 0;
             padding: 0.9rem 1rem;
             border-radius: 10px;
-            border: 1px solid rgba(255,255,255,0.18);
-            background: linear-gradient(135deg, rgba(0,0,0,0.72), rgba(20,20,20,0.78));
-            color: #f2f2f2;
+            border: 1px solid rgba(128,128,128,0.25);
+            background: linear-gradient(135deg, rgba(255,191,71,0.14), rgba(80,140,255,0.08));
+            color: inherit;
             font-weight: 600;
             font-size: 3rem;
             text-align: center;
@@ -87,18 +90,14 @@ def _get_file_mtime_ns(path: str) -> int:
         return -1
 
 
-def _get_env_mtime_ns(env_path: str = ".env") -> int:
-    return _get_file_mtime_ns(env_path)
-
-
 def _sync_env_file_changes() -> None:
-    current_mtime_ns = _get_env_mtime_ns(".env")
+    current_mtime_ns = _get_file_mtime_ns(ENV_FILE_PATH)
     previous_mtime_ns = st.session_state.get("_env_file_mtime_ns")
     if previous_mtime_ns is None:
-        st.session_state._env_file_mtime_ns = current_mtime_ns
+        st.session_state["_env_file_mtime_ns"] = current_mtime_ns
         return
     if current_mtime_ns != previous_mtime_ns:
-        st.session_state._env_file_mtime_ns = current_mtime_ns
+        st.session_state["_env_file_mtime_ns"] = current_mtime_ns
         load_dotenv(override=True)
         _app_debug("Detected .env file change; reloaded environment values.")
 
@@ -130,20 +129,20 @@ def _render_alert_scroll_if_requested() -> None:
         """,
         height=1,
     )
-    st.session_state.auto_scroll_alerts_once = False
+    st.session_state["auto_scroll_alerts_once"] = False
 
 
 def _on_rip_quality_change() -> None:
     quality = st.session_state.get("streamrip_runtime_rip_quality")
     if quality is None or quality not in QUALITY_OPTIONS:
         return
-    st.session_state.active_rip_quality = quality
+    st.session_state["active_rip_quality"] = quality
     config_path = get_streamrip_config_path()
     if config_path and os.path.exists(config_path):
         ok, msg = update_streamrip_quality_only(config_path, quality)
         if ok:
-            st.session_state.streamrip_form_quality = quality
-        st.session_state._quality_save_result = (ok, msg)
+            st.session_state["streamrip_form_quality"] = quality
+        st.session_state["_quality_save_result"] = (ok, msg)
 
 
 init_session_state()
@@ -163,7 +162,7 @@ MAIN_TABS = [
 def _apply_pending_main_tab_redirect() -> None:
     pending_target = str(st.session_state.pop("main_tab_selection_pending", "")).strip()
     if pending_target and pending_target in MAIN_TABS:
-        st.session_state.main_tab_selection = pending_target
+        st.session_state["main_tab_selection"] = pending_target
 
 st.markdown(
     """
@@ -234,38 +233,17 @@ ui_bc_retries = 5
 ui_bc_retry_delay = 10.0
 
 def _open_env_for_qobuz() -> None:
-    env_path = ".env"
+    env_path = ENV_FILE_PATH
     if not os.path.exists(env_path):
-        template = """# Important: So that Python recognizes local directories (e.g., logic) as modules
-PYTHONPATH=.
-# Optional: Set your own Qobuz App ID (if omitted, the app auto-fetches it from Qobuz Web Player)
-# QOBUZ_APP_ID=
-# Required (depending on region/account type): Set your user Auth Token for Qobuz
-QOBUZ_USER_AUTH_TOKEN=
-# Optional app login for public-facing deployments
-APP_AUTH_ENABLED=0
-APP_AUTH_USERNAME=
-APP_AUTH_PASSWORD_HASH=
-# Tracker API Keys or Session Cookies for duplicate checking
-RED_API_KEY=
-RED_SESSION_COOKIE=
-OPS_API_KEY=
-OPS_SESSION_COOKIE=
-# Optional tracker base URLs if you do not use the defaults
-# RED_URL=https://redacted.sh
-# OPS_URL=https://orpheus.network
-# Optional proxy settings (default off — leave blank or comment out to disable)
-# GLOBAL_PROXY applies to all services; service-specific vars override it for that service only
-# GLOBAL_PROXY=http://user:pass@host:port
-# BANDCAMP_PROXY=http://user:pass@host:port
-# QOBUZ_PROXY=http://user:pass@host:port
-# TRACKER_PROXY=http://user:pass@host:port"""
         try:
-            with open(env_path, "w", encoding="utf-8") as f:
-                f.write(template)
+            if os.path.exists(ENV_TEMPLATE_PATH):
+                shutil.copyfile(ENV_TEMPLATE_PATH, env_path)
+            else:
+                with open(env_path, "w", encoding="utf-8") as env_file:
+                    env_file.write("PYTHONPATH=.\nQOBUZ_USER_AUTH_TOKEN=\n")
         except Exception as e:
             _app_debug(f"Failed creating .env template file: {e}")
-            st.session_state.auto_scroll_alerts_once = True
+            st.session_state["auto_scroll_alerts_once"] = True
             st.error(f"Error creating the .env file: {e}")
             return
 
@@ -274,7 +252,7 @@ OPS_SESSION_COOKIE=
         _app_debug("Opened .env in default app.")
     except Exception as e:
         _app_debug(f"Failed opening .env in default app: {e}")
-        st.session_state.auto_scroll_alerts_once = True
+        st.session_state["auto_scroll_alerts_once"] = True
         st.error(f"Could not open .env: {e}")
 
 
@@ -494,7 +472,7 @@ def _cache_streamrip_runtime_state(
         "settings_error": str(settings_error or ""),
         "qobuz_app_id": str(qobuz_app_id or ""),
         "qobuz_token": str(qobuz_token or ""),
-        "env_mtime_ns": _get_env_mtime_ns(".env"),
+        "env_mtime_ns": _get_file_mtime_ns(ENV_FILE_PATH),
         "config_mtime_ns": _get_file_mtime_ns(config_path),
     }
     remember_session_snapshot_value("streamrip_runtime_state", st.session_state.streamrip_runtime_state)
@@ -523,7 +501,7 @@ def _streamrip_runtime_cache_is_stale(cache: dict) -> bool:
     config_path = str(cache.get("config_path", "")).strip()
     if not config_path:
         return True
-    current_env_mtime = _get_env_mtime_ns(".env")
+    current_env_mtime = _get_file_mtime_ns(ENV_FILE_PATH)
     current_config_mtime = _get_file_mtime_ns(config_path)
     cached_env_mtime = _safe_int(cache.get("env_mtime_ns", -2), -2)
     cached_config_mtime = _safe_int(cache.get("config_mtime_ns", -2), -2)
@@ -603,7 +581,7 @@ cached_streamrip_state = st.session_state.get("streamrip_runtime_state")
 if not isinstance(cached_streamrip_state, dict):
     _app_debug("Initial streamrip boot load path entered.")
     initial_config_path = _get_streamrip_config_path_hint() or get_streamrip_config_path()
-    env_mtime_ns = _get_env_mtime_ns(".env")
+    env_mtime_ns = _get_file_mtime_ns(ENV_FILE_PATH)
     config_mtime_ns = _get_file_mtime_ns(initial_config_path)
     with st.status("Starting Streamrip setup...", expanded=False) as streamrip_boot_status:
         streamrip_boot_status.update(label="Resolving Streamrip runtime state...", state="running")
@@ -683,7 +661,7 @@ if streamrip_config_ready and streamrip_settings:
     current_streamrip_identifier = str(streamrip_settings.get("email_or_userid", "")).strip()
     active_qobuz_app_id = current_streamrip_app_id or str(env_qobuz_app_id or "").strip()
 
-    env_mtime_ns = _get_env_mtime_ns(".env")
+    env_mtime_ns = _get_file_mtime_ns(ENV_FILE_PATH)
     config_mtime_ns = _get_file_mtime_ns(streamrip_config_path)
     env_token_newer_than_streamrip = bool(
         str(env_qobuz_token or "").strip()
@@ -895,7 +873,7 @@ if main_tab == "Qobuz Settings":
             else:
                 st.error(msg_save)
 
-    q_col1, q_col2, q_col3 = st.columns([1, 1, 1])
+    q_col1, q_col2, q_col3 = st.columns(3)
     with q_col1:
         if st.button("📝 Open .env for Qobuz Token", help="Open `.env` to set/update Qobuz token values."):
             _app_debug("Qobuz settings action: Open .env clicked.")
@@ -1144,8 +1122,8 @@ if main_tab == "Bandcamp Matcher":
         "max_duration": int(max_duration) if max_duration else None,
         "free_mode": free_mode,
         "only_24bit": only_24bit,
-        "check_red": check_red if "check_red" in locals() else False,
-        "check_ops": check_ops if "check_ops" in locals() else False,
+        "check_red": check_red,
+        "check_ops": check_ops,
     }
 
     col1, col2, col3 = st.columns([1.2, 1.6, 4])
