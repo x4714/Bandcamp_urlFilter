@@ -12,11 +12,22 @@ from logic.proxy_utils import proxy_request_kwargs
 
 logger = logging.getLogger(__name__)
 REQUEST_TIMEOUT = aiohttp.ClientTimeout(total=20)
+SCRAPE_STATUS_SUCCESS = "success"
+SCRAPE_STATUS_FETCH_FAILED = "fetch_failed"
+SCRAPE_STATUS_JSON_LD_NOT_FOUND = "json_ld_not_found"
+SCRAPE_STATUS_ERROR = "error"
 
 
 def _scrape_result(status: str, url: str, **payload) -> dict:
     result = {
         "status": str(status or "").strip() or "error",
+        "error_msg": "",
+        "artist": "",
+        "album": "",
+        "track": "",
+        "track_count": 0,
+        "year": "",
+        "is_single": False,
         "url": str(url or "").strip(),
     }
     result.update(payload)
@@ -137,7 +148,7 @@ async def scrape_bandcamp_metadata(
         proxy=proxy,
     )
     if not html:
-        return _scrape_result("fetch_failed", url, error_msg="Could not fetch Bandcamp page.")
+        return _scrape_result(SCRAPE_STATUS_FETCH_FAILED, url, error_msg="Could not fetch Bandcamp page.")
         
     try:
         soup = BeautifulSoup(html, 'html.parser')
@@ -147,7 +158,7 @@ async def scrape_bandcamp_metadata(
         if ld_json_tag:
             raw_json = ld_json_tag.string or ld_json_tag.get_text(strip=True)
             if not raw_json:
-                return _scrape_result("json_ld_not_found", url)
+                return _scrape_result(SCRAPE_STATUS_JSON_LD_NOT_FOUND, url)
 
             data = json.loads(raw_json)
             
@@ -161,36 +172,35 @@ async def scrape_bandcamp_metadata(
                     num_tracks = item.get('numTracks', 0)
                     date_published = item.get('datePublished', '')
                     name = item.get('name', '')
-                    
-                    return {
-                        "artist": artist_name,
-                        "album": name,
-                        "track_count": num_tracks,
-                        "year": date_published.split()[0][:4] if date_published else "",
-                        "url": url,
-                        "status": "success"
-                    }
-                    
+
+                    return _scrape_result(
+                        SCRAPE_STATUS_SUCCESS,
+                        url,
+                        artist=artist_name,
+                        album=name,
+                        track_count=num_tracks,
+                        year=date_published.split()[0][:4] if date_published else "",
+                    )
+
                 # Handle single tracks if applicable
                 elif item.get('@type') == 'MusicRecording':
                     artist_obj = item.get('byArtist', {})
                     artist_name = artist_obj.get('name', '')
                     date_published = item.get('datePublished', '')
                     name = item.get('name', '')
-                    
-                    return {
-                        "artist": artist_name,
-                        "album": "",
-                        "track": name,
-                        "track_count": 1,
-                        "year": date_published.split()[0][:4] if date_published else "",
-                        "url": url,
-                        "is_single": True,
-                        "status": "success"
-                    }
-                    
-        return _scrape_result("json_ld_not_found", url)
+
+                    return _scrape_result(
+                        SCRAPE_STATUS_SUCCESS,
+                        url,
+                        artist=artist_name,
+                        track=name,
+                        track_count=1,
+                        year=date_published.split()[0][:4] if date_published else "",
+                        is_single=True,
+                    )
+
+        return _scrape_result(SCRAPE_STATUS_JSON_LD_NOT_FOUND, url)
 
     except Exception as exc:
         logger.error("Error parsing metadata for %s: %s", url, exc)
-        return _scrape_result("error", url, error_msg=str(exc))
+        return _scrape_result(SCRAPE_STATUS_ERROR, url, error_msg=str(exc))

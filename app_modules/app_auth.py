@@ -8,8 +8,7 @@ import sqlite3
 import threading
 import time
 
-import streamlit as st
-from app_modules.ui_js import run_inline_script
+from app_modules.env_utils import env_flag, env_int
 
 
 MIN_PBKDF2_SHA256_ITERATIONS = 390000
@@ -29,26 +28,14 @@ AUTH_COOKIE_SECURITY_WARNING = (
 _AUTH_DB_LOCK = threading.Lock()
 
 
-def _env_flag(name: str, default: bool = False) -> bool:
-    raw = str(os.getenv(name, "")).strip().lower()
-    if not raw:
-        return default
-    return raw in {"1", "true", "yes", "on"}
+def _streamlit():
+    import streamlit as st
 
-
-def _env_int(name: str, default: int, minimum: int = 1) -> int:
-    raw = str(os.getenv(name, "")).strip()
-    if not raw:
-        return default
-    try:
-        value = int(raw)
-    except ValueError:
-        return default
-    return max(minimum, value)
+    return st
 
 
 def auth_enabled() -> bool:
-    return _env_flag("APP_AUTH_ENABLED", default=False)
+    return env_flag("APP_AUTH_ENABLED", default=False)
 
 
 def auth_username() -> str:
@@ -60,15 +47,15 @@ def _stored_password_hash() -> str:
 
 
 def auth_session_ttl_seconds() -> int:
-    return _env_int("APP_AUTH_SESSION_TTL_SECONDS", DEFAULT_AUTH_SESSION_TTL_SECONDS, minimum=60)
+    return env_int("APP_AUTH_SESSION_TTL_SECONDS", DEFAULT_AUTH_SESSION_TTL_SECONDS, minimum=60)
 
 
 def auth_max_failures() -> int:
-    return _env_int("APP_AUTH_MAX_FAILURES", DEFAULT_AUTH_MAX_FAILURES, minimum=1)
+    return env_int("APP_AUTH_MAX_FAILURES", DEFAULT_AUTH_MAX_FAILURES, minimum=1)
 
 
 def auth_lockout_seconds() -> int:
-    return _env_int("APP_AUTH_LOCKOUT_SECONDS", DEFAULT_AUTH_LOCKOUT_SECONDS, minimum=1)
+    return env_int("APP_AUTH_LOCKOUT_SECONDS", DEFAULT_AUTH_LOCKOUT_SECONDS, minimum=1)
 
 
 def _auth_cookie_name() -> str:
@@ -80,7 +67,7 @@ def _auth_cookie_name() -> str:
 
 
 def _auth_cookie_secure() -> bool:
-    return _env_flag("APP_AUTH_COOKIE_SECURE", default=True)
+    return env_flag("APP_AUTH_COOKIE_SECURE", default=True)
 
 
 def _ensure_auth_db() -> None:
@@ -311,6 +298,7 @@ def _revoke_auth_token(token: str) -> None:
 
 
 def _clear_auth_session_state() -> None:
+    st = _streamlit()
     st.session_state.app_auth_authenticated = False
     st.session_state.app_auth_user = ""
     st.session_state.app_auth_login_time = 0.0
@@ -318,6 +306,7 @@ def _clear_auth_session_state() -> None:
 
 
 def _queue_auth_cookie_sync(mode: str, token: str = "", max_age: int = 0) -> None:
+    st = _streamlit()
     st.session_state[_AUTH_COOKIE_STATE_KEY] = {
         "mode": str(mode),
         "token": str(token),
@@ -326,6 +315,7 @@ def _queue_auth_cookie_sync(mode: str, token: str = "", max_age: int = 0) -> Non
 
 
 def _flush_auth_cookie_sync() -> None:
+    st = _streamlit()
     pending = st.session_state.pop(_AUTH_COOKIE_STATE_KEY, None)
     if not isinstance(pending, dict):
         return
@@ -343,6 +333,8 @@ def _flush_auth_cookie_sync() -> None:
         "mode": mode,
         "secure": _auth_cookie_secure(),
     }
+    from app_modules.ui_js import run_inline_script
+
     run_inline_script(
         f"""
         <script>
@@ -371,6 +363,7 @@ def _flush_auth_cookie_sync() -> None:
 
 
 def _request_auth_cookie_token() -> str:
+    st = _streamlit()
     context = getattr(st, "context", None)
     cookies = getattr(context, "cookies", None) if context is not None else None
     if cookies is None:
@@ -379,6 +372,7 @@ def _request_auth_cookie_token() -> str:
 
 
 def _logout_session() -> None:
+    st = _streamlit()
     auth_token = str(st.session_state.get("app_auth_token", "") or "")
     if not auth_token:
         auth_token = _request_auth_cookie_token()
@@ -389,6 +383,7 @@ def _logout_session() -> None:
 
 
 def _render_logout_button() -> None:
+    st = _streamlit()
     configured_user = auth_username()
     with st.sidebar:
         st.caption(f"Signed in as `{configured_user}`")
@@ -398,6 +393,7 @@ def _render_logout_button() -> None:
 
 
 def render_auth_gate() -> None:
+    st = _streamlit()
     if not auth_enabled():
         return
 

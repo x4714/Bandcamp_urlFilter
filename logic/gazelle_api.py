@@ -4,6 +4,7 @@ from typing import Any, Dict, Optional
 
 import aiohttp
 
+from app_modules.debug_logging import emit_debug
 from logic.proxy_utils import create_connector_for_proxy, get_proxy, proxy_request_kwargs
 
 
@@ -17,12 +18,45 @@ class GazelleAPI:
         self.failed = False
         self.last_error = ""
         self.authenticated = False
+        self._session: aiohttp.ClientSession | None = None
+        self._proxy: str | None = None
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        if self._session is not None and not self._session.closed:
+            return self._session
+
+        self._proxy = get_proxy("tracker")
+        self._session = aiohttp.ClientSession(
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json",
+                "Referer": f"{self.site_url}/",
+                "Authorization": self.api_key,
+            },
+            connector=create_connector_for_proxy(self._proxy),
+        )
+        return self._session
+
+    async def open(self) -> None:
+        if not self.api_key:
+            return
+        await self._get_session()
+
+    async def __aenter__(self) -> "GazelleAPI":
+        await self.open()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()
 
     async def close(self) -> None:
-        # Requests currently use short-lived ClientSession instances, so there is
-        # no persistent transport to tear down here. Keeping this method lets the
-        # caller always follow a safe cleanup path.
-        return
+        if self._session is not None and not self._session.closed:
+            await self._session.close()
+        self._session = None
+        self._proxy = None
 
     async def authenticate(self) -> bool:
         """
@@ -56,69 +90,52 @@ class GazelleAPI:
 
         self._last_request_time = time.monotonic()
 
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json",
-            "Referer": f"{self.site_url}/",
-            "Connection": "close",
-            "Authorization": self.api_key,
-        }
-
-        from app_modules.debug_logging import emit_debug
-
         emit_debug("gazelle_api", f"[{self.site_name}] Request params: {params}")
 
         try:
-            proxy = get_proxy("tracker")
-            async with aiohttp.ClientSession(
-                headers=headers,
-                connector=create_connector_for_proxy(proxy),
-            ) as session:
-                async with session.get(
-                    f"{self.site_url}/ajax.php",
-                    params=params,
-                    timeout=15,
-                    allow_redirects=False,
-                    **proxy_request_kwargs(proxy),
-                ) as response:
-                    if response.status == 200:
-                        try:
-                            data = await response.json()
-                            if data.get("status") == "success":
-                                resp_data = data.get("response")
-                                res_count = (
-                                    len(resp_data.get("results", []))
-                                    if resp_data and isinstance(resp_data, dict)
-                                    else 0
-                                )
-                                emit_debug("gazelle_api", f"[{self.site_name}] Success. Results: {res_count}")
-                                return resp_data, None
+            session = await self._get_session()
+            async with session.get(
+                f"{self.site_url}/ajax.php",
+                params=params,
+                timeout=15,
+                allow_redirects=False,
+                **proxy_request_kwargs(self._proxy),
+            ) as response:
+                if response.status == 200:
+                    try:
+                        data = await response.json()
+                        if data.get("status") == "success":
+                            resp_data = data.get("response")
+                            res_count = (
+                                len(resp_data.get("results", []))
+                                if resp_data and isinstance(resp_data, dict)
+                                else 0
+                            )
+                            emit_debug("gazelle_api", f"[{self.site_name}] Success. Results: {res_count}")
+                            return resp_data, None
 
-                            err = data.get("error", "Unknown error")
-                            if response.status == 403 or "not logged in" in str(err).lower():
-                                self.failed = True
-                                self.last_error = f"Auth Error: {err}"
-                            return None, f"API Error: {err}"
-                        except Exception as e:
-                            return None, f"JSON Parse Error: {e}"
-                    if response.status in (301, 302):
-                        loc = response.headers.get("Location", "")
-                        self.failed = True
-                        self.last_error = f"Redirect to {loc}"
+                        err = data.get("error", "Unknown error")
+                        if response.status == 403 or "not logged in" in str(err).lower():
+                            self.failed = True
+                            self.last_error = f"Auth Error: {err}"
+                        return None, f"API Error: {err}"
+                    except Exception as e:
+                        return None, f"JSON Parse Error: {e}"
+                if response.status in (301, 302):
+                    loc = response.headers.get("Location", "")
+                    self.failed = True
+                    self.last_error = f"Redirect to {loc}"
 
-                        if "login.php" in loc:
-                            return None, "Login required (API Key invalid or Permission denied?)"
-                        return None, f"Anti-bot/Redirect to {loc}"
-                    if response.status == 403:
-                        self.failed = True
-                        self.last_error = "403 Forbidden"
-                        return None, "Forbidden (403). Tracker might be blocking this IP or API Key."
-                    if response.status == 429:
-                        return None, "Rate limited (429)."
-                    return None, f"HTTP {response.status}"
+                    if "login.php" in loc:
+                        return None, "Login required (API Key invalid or Permission denied?)"
+                    return None, f"Anti-bot/Redirect to {loc}"
+                if response.status == 403:
+                    self.failed = True
+                    self.last_error = "403 Forbidden"
+                    return None, "Forbidden (403). Tracker might be blocking this IP or API Key."
+                if response.status == 429:
+                    return None, "Rate limited (429)."
+                return None, f"HTTP {response.status}"
         except Exception as e:
             return None, f"Request Exception: {e}"
 

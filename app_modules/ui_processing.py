@@ -61,15 +61,20 @@ def handle_process_submission(
 
     stringio = StringIO(uploaded_file.getvalue().decode("utf-8", errors="ignore"))
     lines = stringio.readlines()
-    filtered_entries = build_filtered_entries(lines, filter_config, start_date, end_date)
+    filtered_entries, date_filter_stats = build_filtered_entries(lines, filter_config, start_date, end_date)
     _ui_processing_debug(
         f"Loaded {len(lines)} line(s); filtered down to {len(filtered_entries)} unique entry(ies). "
         f"dry_run={dry_run}"
     )
 
-    st.session_state.status_log = (
-        f"Found {len(filtered_entries)} unique URLs matching your filters out of {len(lines)} total lines."
-    )
+    status_log = f"Found {len(filtered_entries)} unique URLs matching your filters out of {len(lines)} total lines."
+    if date_filter_stats.get("date_filter_active"):
+        status_log += (
+            " "
+            f"Date filter excluded {date_filter_stats.get('date_filtered_out', 0)} entry(ies); "
+            f"{date_filter_stats.get('missing_release_date', 0)} had no release date and were kept."
+        )
+    st.session_state.status_log = status_log
 
     if not filtered_entries:
         _ui_processing_debug("No entries matched filters; stopping submission flow.")

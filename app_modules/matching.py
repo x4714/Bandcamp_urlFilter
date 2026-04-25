@@ -156,11 +156,9 @@ async def process_batch(
     bandcamp_proxy = get_proxy("bandcamp")
     qobuz_proxy = get_proxy("qobuz")
 
-    trackers = list(existing_trackers or [])
-    trackers_created_locally = False
+    trackers = list(existing_trackers or []) if check_dupes else []
 
     if check_dupes and not trackers:
-        trackers_created_locally = True
         red_key = os.getenv("RED_API_KEY", "")
         ops_key = os.getenv("OPS_API_KEY", "")
         red_url = os.getenv("RED_URL", "https://redacted.sh").rstrip("/")
@@ -194,12 +192,15 @@ async def process_batch(
         limit=max(concurrency * 2, 4),
         limit_per_host=concurrency,
     )
-    async with (
-        aiohttp.ClientSession(connector=bandcamp_connector, headers=headers) as bandcamp_session,
-        aiohttp.ClientSession(connector=qobuz_connector, headers=headers) as qobuz_session,
-    ):
-        tasks: list[asyncio.Task] = []
-        try:
+    tasks: list[asyncio.Task] = []
+    try:
+        if trackers:
+            await asyncio.gather(*(tracker.open() for tracker in trackers))
+
+        async with (
+            aiohttp.ClientSession(connector=bandcamp_connector, headers=headers) as bandcamp_session,
+            aiohttp.ClientSession(connector=qobuz_connector, headers=headers) as qobuz_session,
+        ):
             tasks = [
                 asyncio.create_task(process_single_entry(
                     bandcamp_session, qobuz_session, entry, rate_limiter, semaphore,
@@ -229,7 +230,12 @@ async def process_batch(
                     progress_callback(done, total, row)
             _matching_debug(f"process_batch() completed: processed={done}, total={total}.")
             return rows
-        finally:
-            if trackers_created_locally:
-                for tracker in trackers:
-                    await tracker.close()
+    finally:
+        if tasks:
+            for pending_task in tasks:
+                if not pending_task.done():
+                    pending_task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+        for tracker in trackers:
+            await tracker.close()

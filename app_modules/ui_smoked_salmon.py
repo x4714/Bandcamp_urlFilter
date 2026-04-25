@@ -5,18 +5,20 @@ import re
 import streamlit as st
 
 from app_modules.debug_logging import emit_debug
-from app_modules.smoked_salmon import (
-    SALMON_SOURCE_OPTIONS,
+from app_modules.smoked_salmon_config import (
     apply_smoked_salmon_ai_review_settings,
-    check_smoked_salmon_setup,
     ensure_smoked_salmon_config_file,
     get_missing_tool_install_hints,
     get_smoked_salmon_config_path,
-    install_smoked_salmon_with_uv,
     read_smoked_salmon_config_text,
+    save_smoked_salmon_config_text,
+)
+from app_modules.smoked_salmon_upload import (
+    SALMON_SOURCE_OPTIONS,
+    check_smoked_salmon_setup,
+    install_smoked_salmon_with_uv,
     run_smoked_salmon_command,
     run_smoked_salmon_uploads,
-    save_smoked_salmon_config_text,
 )
 
 UI_SALMON_LOG_TAIL_CHARS = 6000
@@ -671,5 +673,5 @@ def render_smoked_salmon_tab(
             st.markdown("\n".join([f"- {url}" for url in spectral_urls[:20]]))
             try:
                 st.image(spectral_urls[:10], width=280)
-            except Exception:
-                pass
+            except Exception as exc:
+                _ui_salmon_debug(f"Could not render smoked-salmon spectral preview images: {exc}")
