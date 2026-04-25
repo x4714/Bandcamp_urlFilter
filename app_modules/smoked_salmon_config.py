@@ -1,8 +1,12 @@
+from __future__ import annotations
+
+import copy
 import os
 import shutil
 import subprocess
 import sys
-from typing import Dict, List
+import tomllib
+from typing import Any, List
 
 from app_modules.debug_logging import emit_debug
 from app_modules.smoked_salmon_fs import ensure_smoked_salmon_directory_settings
@@ -96,41 +100,27 @@ def save_smoked_salmon_config_text(config_path: str, text: str) -> tuple[bool, s
         return False, f"Could not save smoked-salmon config: {e}"
 
 
-def _upsert_toml_value(text: str, section_name: str, key: str, rendered_value: str) -> str:
-    lines = text.splitlines(keepends=True)
-    section_header = f"[{section_name}]"
-    section_start = -1
-    for idx, line in enumerate(lines):
-        if line.strip() == section_header:
-            section_start = idx
-            break
+def _ensure_toml_section(config_data: dict[str, Any], section_name: str) -> dict[str, Any]:
+    current: dict[str, Any] = config_data
+    for segment in section_name.split("."):
+        existing = current.get(segment)
+        if not isinstance(existing, dict):
+            existing = {}
+            current[segment] = existing
+        current = existing
+    return current
 
-    if section_start == -1:
-        if text and not text.endswith("\n"):
-            text += "\n"
-        if text and not text.endswith("\n\n"):
-            text += "\n"
-        return text + f"{section_header}\n{key} = {rendered_value}\n"
 
-    section_end = len(lines)
-    for idx in range(section_start + 1, len(lines)):
-        stripped = lines[idx].strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            section_end = idx
-            break
+def _dump_toml(config_data: dict[str, Any]) -> tuple[bool, str]:
+    try:
+        import tomli_w
+    except ModuleNotFoundError:
+        return False, "Could not save smoked-salmon config: missing dependency `tomli-w`."
 
-    key_prefix = f"{key} = "
-    for idx in range(section_start + 1, section_end):
-        stripped = lines[idx].lstrip()
-        if stripped.startswith("#"):
-            continue
-        if stripped.startswith(f"{key}=") or stripped.startswith(f"{key} ="):
-            newline = "\n" if lines[idx].endswith("\n") else ""
-            lines[idx] = f"{key_prefix}{rendered_value}{newline}"
-            return "".join(lines)
-
-    lines.insert(section_end, f"{key_prefix}{rendered_value}\n")
-    return "".join(lines)
+    try:
+        return True, tomli_w.dumps(config_data)
+    except Exception as e:
+        return False, f"Could not serialize smoked-salmon config TOML: {e}"
 
 
 def apply_smoked_salmon_ai_review_settings(config_path: str, enabled: bool, api_key: str) -> tuple[bool, str]:
@@ -142,24 +132,29 @@ def apply_smoked_salmon_ai_review_settings(config_path: str, enabled: bool, api_
         _salmon_debug("AI review settings update failed: config text was empty/unreadable.")
         return False, f"Could not read smoked-salmon config at `{config_path}`."
 
-    updated = _upsert_toml_value(
-        current_text,
-        "upload.ai_review",
-        "enabled",
-        "true" if enabled else "false",
-    )
-    if enabled:
-        escaped_key = api_key.replace("\\", "\\\\").replace('"', '\\"')
-        updated = _upsert_toml_value(
-            updated,
-            "upload.ai_review",
-            "api_key",
-            f'"{escaped_key}"',
-        )
+    try:
+        parsed = tomllib.loads(current_text)
+    except tomllib.TOMLDecodeError as e:
+        _salmon_debug(f"AI review settings update failed: invalid TOML: {e}")
+        return False, f"Could not parse smoked-salmon config TOML: {e}"
+    if not isinstance(parsed, dict):
+        _salmon_debug("AI review settings update failed: parsed TOML root was not a table.")
+        return False, "Could not parse smoked-salmon config TOML: root table is invalid."
 
-    if updated == current_text:
+    original = copy.deepcopy(parsed)
+    ai_review_table = _ensure_toml_section(parsed, "upload.ai_review")
+    ai_review_table["enabled"] = bool(enabled)
+    if enabled:
+        ai_review_table["api_key"] = str(api_key)
+
+    if parsed == original:
         _salmon_debug("AI review settings already matched config; no file write needed.")
         return True, "AI review settings already match config."
+
+    dump_ok, updated = _dump_toml(parsed)
+    if not dump_ok:
+        _salmon_debug(updated)
+        return False, updated
     _salmon_debug("AI review settings changed; writing updated config.")
     return save_smoked_salmon_config_text(config_path, updated)
 

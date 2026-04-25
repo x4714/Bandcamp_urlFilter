@@ -9,19 +9,18 @@ This repo now ships with `setup-hbd.sh`, a Linux helper intended for HostingByDe
 
 Important Python note:
 
-- the app requires Python 3.10 or newer
-- many HostingByDesign boxes expose `python3.9.2` by default, which is too old for this repo
-- `setup-hbd.sh` searches for `python3.13`, `python3.12`, `python3.11`, `python3.10`, then falls back to `python3` / `python`
-- if no suitable interpreter is found, the script now bootstraps `pyenv` into `~/.local/opt/pyenv` and builds a userland Python automatically
+- `setup-hbd.sh` targets Python 3.9-3.13
+- it searches `python3.13`, `python3.12`, `python3.11`, `python3.10`, `python3.9`, then falls back to `python3` / `python`
+- if it only finds Python 3.14+ (or nothing suitable), it bootstraps `pyenv` into `~/.local/opt/pyenv` and builds a userland Python automatically
 - if you already have a newer interpreter under a specific name, you can force it with `PYTHON_BIN=python3.11 ./setup-hbd.sh`
 - if you do not want the `pyenv` fallback, run `./setup-hbd.sh --skip-pyenv-bootstrap`
-- if `pyenv` cannot build Python because the box is missing compiler dependencies, use Docker or point the script at a host-provided Python 3.10+ binary
+- if `pyenv` cannot build Python because the box is missing compiler dependencies, use Docker or point the script at a host-provided Python 3.9-3.13 binary
 
 ## What the script does
 
 Running `./setup-hbd.sh` will:
 
-1. find a Python 3.10+ interpreter, or bootstrap one with `pyenv` if needed
+1. find a Python 3.9-3.13 interpreter, or bootstrap one with `pyenv` if needed
 2. create or reuse `~/.config/venv/bandcamp-urlfilter`
 3. install `requirements.txt`
 4. require and configure built-in app auth for the current shell user when you are exposing the app on a public-facing HBD domain

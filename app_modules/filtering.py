@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from datetime import date
 
 from app_modules.debug_logging import emit_debug

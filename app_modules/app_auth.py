@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import base64
 import hashlib
 import hmac
@@ -19,6 +21,8 @@ _AUTH_REMEMBER_ME_TTL = 30 * 24 * 60 * 60  # 30 days
 _AUTH_COOKIE_NAME_DEFAULT = "bandcamp_urlfilter_auth_session"
 _AUTH_COOKIE_STATE_KEY = "bandcamp_urlfilter_auth_cookie_sync"
 _AUTH_DB_PATH = os.path.abspath(os.path.join(".streamlit", "bandcamp_urlfilter_auth.sqlite3"))
+_AUTH_DB_TIMEOUT_SECONDS = 30.0
+_AUTH_DB_BUSY_TIMEOUT_MS = 30_000
 AUTH_COOKIE_SECURITY_WARNING = (
     "Known limitation: Streamlit can only sync this auth cookie from client-side JavaScript, "
     "so it cannot be marked HttpOnly. Treat it as a lightweight app gate, not a substitute "
@@ -26,6 +30,13 @@ AUTH_COOKIE_SECURITY_WARNING = (
 )
 
 _AUTH_DB_LOCK = threading.Lock()
+
+
+def _connect_auth_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(_AUTH_DB_PATH, timeout=_AUTH_DB_TIMEOUT_SECONDS)
+    conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {_AUTH_DB_BUSY_TIMEOUT_MS}")
+    return conn
 
 
 def _streamlit():
@@ -72,7 +83,7 @@ def _auth_cookie_secure() -> bool:
 
 def _ensure_auth_db() -> None:
     os.makedirs(os.path.dirname(_AUTH_DB_PATH), exist_ok=True)
-    with sqlite3.connect(_AUTH_DB_PATH) as conn:
+    with _connect_auth_db() as conn:
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS auth_sessions (
@@ -107,9 +118,7 @@ def _ensure_auth_db() -> None:
 
 def _get_auth_db_connection() -> sqlite3.Connection:
     _ensure_auth_db()
-    conn = sqlite3.connect(_AUTH_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return _connect_auth_db()
 
 
 def _auth_token_hash(token: str) -> str:
@@ -199,6 +208,8 @@ def _register_failed_attempt(now: float | None = None) -> int:
     current_time = time.time() if now is None else float(now)
     with _AUTH_DB_LOCK:
         with _get_auth_db_connection() as conn:
+            # Serialize failed-attempt updates so concurrent workers cannot lose increments.
+            conn.execute("BEGIN IMMEDIATE")
             row = _get_auth_state_row(conn)
             lockout_until = float(row["lockout_until"] or 0.0)
             if lockout_until > current_time:
@@ -225,6 +236,7 @@ def _register_failed_attempt(now: float | None = None) -> int:
 def _clear_failed_attempts() -> None:
     with _AUTH_DB_LOCK:
         with _get_auth_db_connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             conn.execute(
                 """
                 UPDATE auth_state

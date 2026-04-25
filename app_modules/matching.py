@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import os
 from typing import Optional
@@ -5,6 +7,7 @@ from typing import Optional
 import aiohttp
 
 from app_modules.debug_logging import emit_debug
+from app_modules.env_utils import env_float, env_int
 from logic.gazelle_api import GazelleAPI
 from logic.metadata_scraper import HostRateLimiter, scrape_bandcamp_metadata
 from logic.proxy_utils import create_connector_for_proxy, get_proxy
@@ -19,26 +22,6 @@ STATUS_NO_MATCH = "❌ No Match on Qobuz"
 
 def _matching_debug(message: str) -> None:
     emit_debug("matching", message)
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    try:
-        return max(1, int(raw))
-    except ValueError:
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        return default
 
 
 async def process_single_entry(
@@ -68,6 +51,7 @@ async def process_single_entry(
         return {
             "Artist": entry.artist,
             "Album": entry.title,
+            "UPC": None,
             "Bandcamp Link": entry.url,
             "Qobuz Link": "",
             "Status": STATUS_ERROR_SCRAPING,
@@ -83,6 +67,7 @@ async def process_single_entry(
         return {
             "Artist": bc_data.get("artist"),
             "Album": bc_data.get("album"),
+            "UPC": None,
             "Bandcamp Link": bc_data.get("url"),
             "Qobuz Link": "",
             "Status": STATUS_QOBUZ_AUTH_REQUIRED,
@@ -92,6 +77,7 @@ async def process_single_entry(
         return {
             "Artist": bc_data.get("artist"),
             "Album": bc_data.get("album"),
+            "UPC": None,
             "Bandcamp Link": bc_data.get("url"),
             "Qobuz Link": "",
             "Status": STATUS_QOBUZ_CONFIG_ERROR,
@@ -126,6 +112,7 @@ async def process_single_entry(
     return {
         "Artist": bc_data.get("artist"),
         "Album": bc_data.get("album"),
+        "UPC": None,
         "Bandcamp Link": bc_data.get("url"),
         "Qobuz Link": "",
         "Status": STATUS_NO_MATCH,
@@ -146,8 +133,12 @@ async def process_batch(
     bc_base_delay: Optional[float] = None,
 ):
     _matching_debug(f"process_batch() called with {len(entries)} entry(ies), check_dupes={check_dupes}.")
-    concurrency = int(concurrency) if concurrency is not None else _env_int("BANDCAMP_CONCURRENCY", 2)
-    min_interval_seconds = float(min_interval_seconds) if min_interval_seconds is not None else _env_float("BANDCAMP_MIN_INTERVAL_SECONDS", 1.0)
+    concurrency = int(concurrency) if concurrency is not None else env_int("BANDCAMP_CONCURRENCY", 2)
+    min_interval_seconds = (
+        float(min_interval_seconds)
+        if min_interval_seconds is not None
+        else env_float("BANDCAMP_MIN_INTERVAL_SECONDS", 1.0)
+    )
     qobuz_max_retries = int(qobuz_max_retries) if qobuz_max_retries is not None else 3
     qobuz_base_delay = float(qobuz_base_delay) if qobuz_base_delay is not None else 10.0
     bc_max_retries = int(bc_max_retries) if bc_max_retries is not None else 5
@@ -193,9 +184,12 @@ async def process_batch(
         limit_per_host=concurrency,
     )
     tasks: list[asyncio.Task] = []
+    opened_trackers: list[GazelleAPI] = []
     try:
         if trackers:
-            await asyncio.gather(*(tracker.open() for tracker in trackers))
+            for tracker in trackers:
+                await tracker.open()
+                opened_trackers.append(tracker)
 
         async with (
             aiohttp.ClientSession(connector=bandcamp_connector, headers=headers) as bandcamp_session,
@@ -237,5 +231,10 @@ async def process_batch(
                     pending_task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-        for tracker in trackers:
-            await tracker.close()
+        for tracker in opened_trackers:
+            try:
+                await tracker.close()
+            except Exception as close_error:
+                _matching_debug(
+                    f"Tracker close failed for `{tracker.site_name}` and was ignored during cleanup: {close_error}"
+                )

@@ -1,3 +1,53 @@
-from .smoked_salmon_config import *
-from .smoked_salmon_upload import *
-from .smoked_salmon_fs import *
+from .smoked_salmon_config import (
+    SALMON_REQUIRED_TOOLS,
+    apply_smoked_salmon_ai_review_settings,
+    bootstrap_smoked_salmon_default_config,
+    ensure_smoked_salmon_config_file,
+    find_smoked_salmon_default_config_template_path,
+    get_missing_tool_install_hints,
+    get_smoked_salmon_config_path,
+    read_smoked_salmon_config_text,
+    save_smoked_salmon_config_text,
+)
+from .smoked_salmon_fs import ensure_smoked_salmon_directory_settings
+from .smoked_salmon_upload import (
+    DEFAULT_SMOKED_SALMON_PROMPT_RESPONSES,
+    SALMON_LOG_TAIL_CHARS,
+    SALMON_PROMPT_SCAN_BUFFER_CHARS,
+    SALMON_SOURCE_OPTIONS,
+    SALMON_UPLOAD_TIMEOUT_SECONDS,
+    SALMON_UV_INSTALL_TIMEOUT_SECONDS,
+    check_smoked_salmon_setup,
+    install_smoked_salmon_with_uv,
+    install_uv_tool,
+    resolve_smoked_salmon_command,
+    resolve_uv_command,
+    run_smoked_salmon_command,
+    run_smoked_salmon_uploads,
+)
+
+__all__ = [
+    "DEFAULT_SMOKED_SALMON_PROMPT_RESPONSES",
+    "SALMON_LOG_TAIL_CHARS",
+    "SALMON_PROMPT_SCAN_BUFFER_CHARS",
+    "SALMON_REQUIRED_TOOLS",
+    "SALMON_SOURCE_OPTIONS",
+    "SALMON_UPLOAD_TIMEOUT_SECONDS",
+    "SALMON_UV_INSTALL_TIMEOUT_SECONDS",
+    "apply_smoked_salmon_ai_review_settings",
+    "bootstrap_smoked_salmon_default_config",
+    "check_smoked_salmon_setup",
+    "ensure_smoked_salmon_config_file",
+    "ensure_smoked_salmon_directory_settings",
+    "find_smoked_salmon_default_config_template_path",
+    "get_missing_tool_install_hints",
+    "get_smoked_salmon_config_path",
+    "install_smoked_salmon_with_uv",
+    "install_uv_tool",
+    "read_smoked_salmon_config_text",
+    "resolve_smoked_salmon_command",
+    "resolve_uv_command",
+    "run_smoked_salmon_command",
+    "run_smoked_salmon_uploads",
+    "save_smoked_salmon_config_text",
+]

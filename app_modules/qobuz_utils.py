@@ -1,12 +1,12 @@
+from __future__ import annotations
+
 import hashlib
-import hmac
 from datetime import datetime, timezone
 
 SECONDS_PER_DAY = 24 * 60 * 60
-TOKEN_FINGERPRINT_KEY = b"bandcamp-urlfilter-token-fingerprint-v1"
 
 
-def _parse_utc_datetime(value: str) -> datetime | None:
+def parse_utc_datetime(value: str) -> datetime | None:
     raw = str(value or "").strip()
     if not raw:
         return None
@@ -24,21 +24,23 @@ def _parse_utc_datetime(value: str) -> datetime | None:
     return None
 
 
-def _qobuz_account_days_until_expiry(expires_at_iso: str) -> int | None:
-    expires_at = _parse_utc_datetime(expires_at_iso)
+def qobuz_account_days_until_expiry(expires_at_iso: str) -> int | None:
+    expires_at = parse_utc_datetime(expires_at_iso)
     if expires_at is None:
         return None
     seconds_left = (expires_at - datetime.now(timezone.utc)).total_seconds()
     return int(seconds_left // SECONDS_PER_DAY)
 
 
-def _token_fingerprint(token: str) -> str:
+def token_fingerprint(token: str) -> str:
     raw_token = str(token or "")
     if not raw_token:
         return ""
-    digest = hmac.new(
-        TOKEN_FINGERPRINT_KEY,
-        raw_token.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+    digest = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
     return digest[:16]
+
+
+# Backward-compatible aliases for existing internal imports.
+_parse_utc_datetime = parse_utc_datetime
+_qobuz_account_days_until_expiry = qobuz_account_days_until_expiry
+_token_fingerprint = token_fingerprint

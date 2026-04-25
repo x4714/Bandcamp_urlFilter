@@ -41,7 +41,7 @@ Options:
   --env-file <path>       Override the .env path.
   --enable-auth           Force app auth setup during install.
   --disable-auth          Skip app auth setup (localhost bind only).
-  --skip-pyenv-bootstrap  Do not auto-install pyenv when only Python <3.10 is available.
+  --skip-pyenv-bootstrap  Do not auto-install pyenv when no Python 3.9-3.13 is available.
   --no-start              Write/update the service without starting it.
   -h, --help              Show this help text.
 EOF
@@ -92,7 +92,7 @@ python_version_ok() {
   local candidate="$1"
   "$candidate" - <<'PY' >/dev/null 2>&1
 import sys
-raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
+raise SystemExit(0 if (3, 9) <= sys.version_info < (3, 14) else 1)
 PY
 }
 
@@ -118,7 +118,7 @@ install_pyenv() {
   if pyenv_available; then return 0; fi
   require_command git
   mkdir -p "$(dirname "$PYENV_ROOT")"
-  echo "No Python 3.10+ interpreter found on PATH." >&2
+  echo "No compatible Python (3.9-3.13) interpreter found on PATH." >&2
   echo "Bootstrapping pyenv into ${PYENV_ROOT}..." >&2
   echo "(This can take a minute — cloning pyenv from GitHub.)" >&2
   git clone https://github.com/pyenv/pyenv.git "$PYENV_ROOT" >> "$log" 2>&1
@@ -327,7 +327,7 @@ ensure_pyenv_python() {
 pick_python() {
   local candidates=() candidate="" found_old=()
   if [[ -n "${PYTHON_BIN}" ]]; then candidates+=("${PYTHON_BIN}"); fi
-  candidates+=(python3.13 python3.12 python3.11 python3.10 python3 python)
+  candidates+=(python3.13 python3.12 python3.11 python3.10 python3.9 python3 python)
 
   for candidate in "${candidates[@]}"; do
     if ! command -v "$candidate" >/dev/null 2>&1; then continue; fi
@@ -345,7 +345,7 @@ pick_python() {
   if [[ "${#found_old[@]}" -gt 0 ]]; then
     echo "Found Python interpreter(s), but none are usable: ${found_old[*]}" >&2
   else
-    echo "No usable Python 3.10+ found on PATH." >&2
+    echo "No usable Python 3.9-3.13 found on PATH." >&2
   fi
 
   if [[ "$SKIP_PYENV_BOOTSTRAP" == "1" ]]; then
@@ -486,7 +486,7 @@ function _install() {
     fi
 
     if ! python_version_ok "${VENV_DIR}/bin/python"; then
-        echo "Existing virtualenv is not Python 3.10+; recreating..."
+        echo "Existing virtualenv is not Python 3.9-3.13; recreating..."
         rm -rf "$VENV_DIR"
         "$PYTHON_BIN" -m venv "$VENV_DIR"
     fi

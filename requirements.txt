@@ -5,4 +5,5 @@ python-dotenv>=1.0.1,<2
 aiohttp>=3.9.3,<4
 aiohttp-socks>=0.11.0,<0.12
 pandas>=2.0.0,<3
-git+https://github.com/nathom/streamrip.git@v2.2.0 ; python_version >= "3.10" and python_version < "3.14"
+tomli-w>=1.1.0,<2
+git+https://github.com/x4714/streamrip.git ; python_version >= "3.10" and python_version < "3.14"

@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 import streamlit as st
 
 from app_modules.qobuz_utils import (
-    _parse_utc_datetime,
-    _qobuz_account_days_until_expiry,
-    _token_fingerprint,
+    parse_utc_datetime,
+    qobuz_account_days_until_expiry,
+    token_fingerprint,
 )
 from app_modules.streamrip import (
     fetch_qobuz_account_info,
@@ -15,7 +15,6 @@ from app_modules.streamrip import (
     save_streamrip_settings,
 )
 from app_modules.time_utils import format_app_datetime, get_app_timezone_name
-from app_modules.ui_modal import open_qobuz_help_modal, render_qobuz_help_modals
 from app_modules.ui_state import remember_session_snapshot_value
 
 
@@ -34,10 +33,10 @@ def _should_refresh_qobuz_account_info(cache: dict, app_id: str, token: str) -> 
         return True
     if str(cache.get("app_id", "")) != str(app_id):
         return True
-    if str(cache.get("token_fingerprint", "")) != _token_fingerprint(token):
+    if str(cache.get("token_fingerprint", "")) != token_fingerprint(token):
         return True
 
-    fetched_at = _parse_utc_datetime(str(cache.get("fetched_at", "")))
+    fetched_at = parse_utc_datetime(str(cache.get("fetched_at", "")))
     if fetched_at is None:
         return True
 
@@ -46,7 +45,7 @@ def _should_refresh_qobuz_account_info(cache: dict, app_id: str, token: str) -> 
     if not ok:
         return fetched_at.date() != today
 
-    days_left = _qobuz_account_days_until_expiry(str(cache.get("subscription_expires_at", "")))
+    days_left = qobuz_account_days_until_expiry(str(cache.get("subscription_expires_at", "")))
     if days_left is None:
         return False
     if days_left > 7:
@@ -78,7 +77,6 @@ def render_qobuz_settings_tab(
     open_env_for_qobuz: Callable[[], None],
     cache_streamrip_runtime_state: Callable[[str, bool, str, dict, str, str, str], None],
 ) -> tuple[dict, str]:
-    render_qobuz_help_modals()
     st.subheader("🔐 Qobuz Settings")
     st.caption("Manage Qobuz auth and view account/subscription details.")
 
@@ -131,19 +129,12 @@ def render_qobuz_settings_tab(
             else:
                 st.error(msg_save)
 
-    q_col1, q_col2, q_col3 = st.columns(3)
+    q_col1, q_col2 = st.columns(2)
     with q_col1:
         if st.button("📝 Open .env for Qobuz Token", help="Open `.env` to set/update Qobuz token values."):
             app_debug("Qobuz settings action: Open .env clicked.")
             open_env_for_qobuz()
     with q_col2:
-        if st.button("Get Qobuz Token", help="Open the built-in token help modal with step-by-step instructions."):
-            app_debug("Qobuz settings action: Get token help clicked.")
-            open_qobuz_help_modal()
-            # The modal is rendered earlier in this tab, so force a fresh run
-            # after flipping session state to show it on the first click.
-            st.rerun()
-    with q_col3:
         refresh_account_info = st.button(
             "Refresh Account Info",
             help="Fetch latest account data now from Qobuz.",
@@ -162,7 +153,7 @@ def render_qobuz_settings_tab(
             "ok": bool(ok_info),
             "message": str(info_msg or ""),
             "app_id": str(active_qobuz_app_id),
-            "token_fingerprint": _token_fingerprint(env_qobuz_token),
+            "token_fingerprint": token_fingerprint(env_qobuz_token),
             "fetched_at": datetime.now(timezone.utc).isoformat(),
             "data": dict(info_data or {}),
             "subscription_expires_at": str(info_data.get("subscription_expires_at", "")) if isinstance(info_data, dict) else "",
@@ -214,10 +205,10 @@ def render_qobuz_settings_tab(
     account_ok = bool(account_cache.get("ok", False))
     account_data = dict(account_cache.get("data", {}) or {})
     account_msg = str(account_cache.get("message", "")).strip()
-    fetched_at = _parse_utc_datetime(str(account_cache.get("fetched_at", "")))
-    subscription_expires_at = _parse_utc_datetime(str(account_data.get("subscription_expires_at", "")))
-    next_renewal_at = _parse_utc_datetime(str(account_data.get("next_renewal_at", "")))
-    days_left = _qobuz_account_days_until_expiry(str(account_cache.get("subscription_expires_at", "")))
+    fetched_at = parse_utc_datetime(str(account_cache.get("fetched_at", "")))
+    subscription_expires_at = parse_utc_datetime(str(account_data.get("subscription_expires_at", "")))
+    next_renewal_at = parse_utc_datetime(str(account_data.get("next_renewal_at", "")))
+    days_left = qobuz_account_days_until_expiry(str(account_cache.get("subscription_expires_at", "")))
 
     st.markdown("### Account Status")
     if not can_fetch_account_info:
